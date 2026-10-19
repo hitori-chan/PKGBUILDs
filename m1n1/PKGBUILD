@@ -1,0 +1,44 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+
+pkgname=m1n1
+_tree=m1n1
+_commit=a0af73eff3dd1dadf2b7c9c99a901dd38f4353ae
+pkgver=2.0.0.r55.g${_commit::8}
+pkgrel=1
+pkgdesc='Asahi Linux bootloader'
+_artwork_commit_id=80d14f8b6f485b310e305a84b4b806361518ddd1
+_artwork_srcname=artwork-${_artwork_commit_id}
+_m1n1_srcname=m1n1-${_commit}
+arch=('aarch64')
+url='https://github.com/hitori-chan/m1n1'
+license=('MIT AND CC0-1.0 AND OFL-1.1-RFN AND Zlib AND (BSD-2-Clause OR GPL-2.0-or-later) AND (BSD-3-Clause OR GPL-2.0-or-later) AND (MIT OR Apache-2.0)')
+makedepends=( imagemagick rust rust-src )
+source=(
+  "artwork-${_artwork_commit_id}.tar.gz::https://github.com/AsahiLinux/artwork/archive/${_artwork_commit_id}.tar.gz"
+  "${_m1n1_srcname}.tar.gz::https://github.com/hitori-chan/m1n1/archive/${_commit}.tar.gz"
+)
+sha256sums=('f2b18744a38d1369a8e9e59acddd12551c5500435fbd9e709fe7a6b212a070ac'
+            'SKIP')
+
+prepare() {
+  rm -rf "${srcdir}/$_m1n1_srcname"/artwork
+  cp -r "${srcdir}/$_artwork_srcname" "${srcdir}/$_m1n1_srcname"/artwork
+}
+
+build() {
+  cd "${srcdir}/$_m1n1_srcname"
+  local v=${pkgver/.r/-}
+  M1N1_VERSION_TAG=v${v/.g/-g} make ARCH= RELEASE=1 BUILDSTD=1
+}
+
+package() {
+  cd "${srcdir}"
+
+  tgtdir="$pkgdir/usr/lib/asahi-boot"
+
+  install -Dt "$tgtdir" -m644 "${_m1n1_srcname}/build/m1n1.bin"
+
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" \
+    "$srcdir/$_m1n1_srcname/LICENSE" \
+    "$srcdir/$_m1n1_srcname"/3rdparty_licenses/LICENSE.*
+}
