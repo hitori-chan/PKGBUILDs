@@ -1,0 +1,28 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+# Contributor: Jos Dehaes <jos.dehaes@gmail.com>
+# Contributor: Matthias Kurz <m.kurz@irregular.at>
+
+pkgname=asahi-audio
+_commit=ab1b46928d056bb02bb4ad72d522dab57dc9efe1
+pkgver=5.0.r2.g${_commit::8}
+pkgrel=1
+pkgdesc='Linux Userspace Audio Configuration'
+arch=('aarch64')
+url='http://asahilinux.org'
+license=('GPL-2.0-or-later')
+makedepends=(wireplumber pipewire make)
+depends=('wireplumber>=0.5.2' 'pipewire>=1.0' 'bankstown>=1.1.0' 'lsp-plugins-lv2>=1.2.15' speakersafetyd 'triforce-lv2>=0.2.0')
+source=(
+  "${pkgname}-${_commit}.tar.gz::https://github.com/AsahiLinux/${pkgname}/archive/${_commit}.tar.gz"
+)
+sha256sums=('SKIP')
+
+build() {
+  cd "${srcdir}/${pkgname}-${_commit}"
+  make
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${_commit}"
+  make DESTDIR="${pkgdir}" install
+}
