@@ -28,7 +28,7 @@ source=(
 )
 sha256sums=('SKIP'
             'a8412899bac7e09fa870a382e3cb97264bc071e9714c509800fa36f256633e2b'
-            '0b2e74db98e3bbb91f6ddc4dcc5e8d46b87e1ec963fc0d693150fd6703610e6a')
+            '6544f1bab2c743011dca97a0fb390412a8275957d9fe5f0a591bd4cccc3b55b7')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
