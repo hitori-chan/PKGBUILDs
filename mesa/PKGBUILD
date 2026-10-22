@@ -103,9 +103,13 @@ options=(
 source=(
   "$_srcname.tar.gz::https://github.com/hitori-chan/mesa/archive/$_commit.tar.gz"
   "git+https://gitlab.freedesktop.org/virgl/venus-protocol.git#tag=v1.1.3"
+  "mesa-libclc-22.1.8.3-spirv-mesa3d-.spv::https://gitlab.freedesktop.org/api/v4/projects/27606/packages/generic/mesa-libclc/22.1.8.3/spirv-mesa3d-.spv"
+  "mesa-libclc-22.1.8.3-spirv64-mesa3d-.spv::https://gitlab.freedesktop.org/api/v4/projects/27606/packages/generic/mesa-libclc/22.1.8.3/spirv64-mesa3d-.spv"
 )
 sha256sums=('SKIP'
-            'SKIP')
+            'SKIP'
+            '59552f9e22ec221061e9939fc90a46e4159d1400b2e1f85eff46924489d532aa'
+            '728cdfa747a1857829c104291984964971783a301a62e9468a3d5a4f1750c949')
 
 # Rust crates for NVK, used as Meson subprojects
 _crates=(
@@ -179,6 +183,13 @@ prepare() {
   # its GPU cache; otherwise it can cause pages to render incorrectly.
   # https://bugs.launchpad.net/ubuntu/+source/chromium-browser/+bug/2020604
   echo "${pkgver//_/-}-arch$epoch.$pkgrel" >VERSION
+
+  mkdir -p ../mesa-libclc/pkgconfig
+  for src in spirv spirv64; do
+    cp ../mesa-libclc-22.1.8.3-$src-mesa3d-.spv ../mesa-libclc/$src-mesa3d-.spv
+  done
+  printf 'libexecdir=%s\n\nName: mesa-libclc\nDescription: Library requirements of the OpenCL C programming language\nVersion: 0.2.0\nLibs: -L${libexecdir}\n' \
+    "$srcdir/mesa-libclc" >../mesa-libclc/pkgconfig/mesa-libclc.pc
 }
 
 build() {
@@ -200,6 +211,7 @@ build() {
     -D intel-virtio-experimental=true
     -D libunwind=disabled
     -D microsoft-clc=disabled
+    -D static-libclc=all
     -D valgrind=enabled
     -D video-codecs=all
     -D vulkan-drivers=amd,intel,intel_hasvk,swrast,freedreno,panfrost,virtio,broadcom,imagination,microsoft-experimental,nouveau,asahi,gfxstream
@@ -210,6 +222,7 @@ build() {
 
   # Inject subproject packages
   export MESON_PACKAGE_CACHE_DIR="$srcdir"
+  export PKG_CONFIG_PATH="$srcdir/mesa-libclc/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
   arch-meson $_srcname build "${meson_options[@]}"
   meson compile -C build
