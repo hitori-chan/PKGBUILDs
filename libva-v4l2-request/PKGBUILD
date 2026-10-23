@@ -1,0 +1,26 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+
+pkgname=libva-v4l2-request
+_commit=4f60c51f7841dd74bb61c94a4ad31e630bbdab01
+pkgver=1.3.r11
+pkgrel=2
+pkgdesc='VA-API driver for V4L2 stateless decoders, with the Apple Video Decoder fixes'
+arch=('aarch64')
+url='https://github.com/omacom/libva-v4l2_request'
+depends=('libva' 'libdrm')
+makedepends=('meson' 'linux-api-headers')
+license=('GPL-3.0-or-later')
+source=(
+  "libva-v4l2_request-${_commit}.tar.gz::https://github.com/omacom/libva-v4l2_request/archive/${_commit}.tar.gz"
+)
+sha256sums=('826fda7396374daea1c39c08e2057dd2b4775cf0205c59bce2d30ce2bfd212a4')
+
+build() {
+  arch-meson "libva-v4l2_request-${_commit}" build
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+  ln -s v4l2_request_drv_video.so "${pkgdir}/usr/lib/dri/asahi_drv_video.so"
+}
