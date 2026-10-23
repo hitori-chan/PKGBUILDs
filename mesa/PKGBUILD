@@ -26,9 +26,9 @@ pkgname=(
   mesa-docs
 )
 _tree=mesa
-_commit=ed66f649481c467a7b3de722b99ff1f8d4d919ee
+_commit=4c3cdb13572733011b7313f6ced789ca819ee5e5
 _srcname=mesa-$_commit
-pkgver=27.0.0_devel.r256.g${_commit::11}
+pkgver=27.0.0_devel.r258.g${_commit::11}
 pkgrel=1
 epoch=1
 pkgdesc="Open-source OpenGL drivers"
@@ -211,6 +211,7 @@ build() {
     -D intel-virtio-experimental=true
     -D libunwind=disabled
     -D microsoft-clc=disabled
+    -D panfrost-rust=false
     -D static-libclc=all
     -D valgrind=enabled
     -D video-codecs=all
