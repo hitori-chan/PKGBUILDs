@@ -4,7 +4,7 @@ _tree=linux
 _commit=b30a8d0e1350872ef6b31d2d8b6d298713a7074e
 _kver=7.2.12
 _rev=150
-pkgrel=1
+pkgrel=2
 
 _m1n1_version=1.6.1
 
@@ -28,7 +28,7 @@ source=(
 )
 sha256sums=('SKIP'
             'a8412899bac7e09fa870a382e3cb97264bc071e9714c509800fa36f256633e2b'
-            '6544f1bab2c743011dca97a0fb390412a8275957d9fe5f0a591bd4cccc3b55b7')
+            'fc13f3f5939776c8ce3db3ec20e247429626e6ab3f1233aa1095cee47d53593b')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
