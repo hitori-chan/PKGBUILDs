@@ -3,10 +3,10 @@
 _tree=linux
 _commit=e8a4a35cbd50ca9e557a6cbe10073ec373e8f735
 _kver=7.2.12
-_rev=156
+_rev=157
 pkgrel=1
 
-_m1n1_version=1.6.1
+_m1n1_version=1.9.9
 
 pkgbase=linux-asahi
 _srcname=linux-${_commit}
@@ -27,7 +27,7 @@ source=(
   config.g15
 )
 sha256sums=('SKIP'
-            'a8412899bac7e09fa870a382e3cb97264bc071e9714c509800fa36f256633e2b'
+            '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
             'fc13f3f5939776c8ce3db3ec20e247429626e6ab3f1233aa1095cee47d53593b')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
