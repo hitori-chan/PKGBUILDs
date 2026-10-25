@@ -3,7 +3,7 @@
 pkgname=libva-v4l2-request
 _commit=4f60c51f7841dd74bb61c94a4ad31e630bbdab01
 pkgver=1.3.r11
-pkgrel=2
+pkgrel=3
 pkgdesc='VA-API driver for V4L2 stateless decoders, with the Apple Video Decoder fixes'
 arch=('aarch64')
 url='https://github.com/omacom/libva-v4l2_request'
@@ -14,6 +14,11 @@ source=(
   "libva-v4l2_request-${_commit}.tar.gz::https://github.com/omacom/libva-v4l2_request/archive/${_commit}.tar.gz"
 )
 sha256sums=('826fda7396374daea1c39c08e2057dd2b4775cf0205c59bce2d30ce2bfd212a4')
+
+prepare() {
+  sed -i 's/^#define V4L2R_AVD_VP9_MIN_DIMENSION 64u$/#define V4L2R_AVD_VP9_MIN_DIMENSION 1u/' \
+    "libva-v4l2_request-${_commit}/src/v4l2_request.h"
+}
 
 build() {
   arch-meson "libva-v4l2_request-${_commit}" build
