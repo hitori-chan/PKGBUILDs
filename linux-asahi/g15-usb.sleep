@@ -1,0 +1,14 @@
+#!/bin/sh
+# Before a suspend, reset each USB controller that took a Host System Error this boot: it cannot save its state, and
+# s2idle would abort at once. Rebinding its dwc3-apple parent resets it; its old xhci-hcd device then goes, so a
+# controller is reset once.
+[ "$1" = pre ] || exit 0
+for x in $(journalctl -k -b -q --no-pager -g 'xhci-hcd\.[0-9]+\.auto: WARNING: Host System Error' |
+        grep -o 'xhci-hcd\.[0-9]*\.auto' | sort -u); do
+    [ -e /sys/bus/platform/devices/$x ] || continue
+    d=$(basename "$(readlink -f /sys/bus/platform/devices/$x/..)")
+    echo "$d" > /sys/bus/platform/drivers/dwc3-apple/unbind
+    echo "$d" > /sys/bus/platform/drivers/dwc3-apple/bind
+    echo "g15-usb: reset $d ($x took a Host System Error)" > /dev/kmsg
+done
+exit 0

@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=6dae8d0265404b842c9e54eb5c35908926d1cac5
+_commit=d42feff1a2733ec90422a5de970f67e48003d093
 _kver=7.2.12
-_rev=162
+_rev=163
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -25,10 +25,12 @@ source=(
   "$_srcname.tar.gz::https://github.com/hitori-chan/linux/archive/${_commit}.tar.gz"
   config
   config.g15
+  g15-usb.sleep
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
-            'e701c05b3aab3ca7ce4c2e16400d1e367eb49659b430c41752ff0afa41a0e8c1')
+            'e701c05b3aab3ca7ce4c2e16400d1e367eb49659b430c41752ff0afa41a0e8c1'
+            'f7be6645772d0a6754b0e3696dfb03abd3d9774762f3e57c9ef6fc7a0f5272b9')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -92,6 +94,8 @@ _package_kernel() {
 
   echo "Installing device trees..."
   install -Dt "$modulesdir/dtbs" "$O"/arch/arm64/boot/dts/apple/*.dtb
+
+  install -Dm755 "$srcdir/g15-usb.sleep" "$pkgdir/usr/lib/systemd/system-sleep/g15-usb"
 
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
