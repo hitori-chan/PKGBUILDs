@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=16023e7d9eac0fe99c4dd32a2b39887db227f0d1
+_commit=e121f56141f873190daa52df284fecbdf3845dce
 _kver=7.2.12
-_rev=160
+_rev=161
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -28,7 +28,7 @@ source=(
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
-            'fc13f3f5939776c8ce3db3ec20e247429626e6ab3f1233aa1095cee47d53593b')
+            'e701c05b3aab3ca7ce4c2e16400d1e367eb49659b430c41752ff0afa41a0e8c1')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
