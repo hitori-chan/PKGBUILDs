@@ -9,6 +9,6 @@ for x in $(journalctl -k -b -q --no-pager -g 'xhci-hcd\.[0-9]+\.auto: WARNING: H
     d=$(basename "$(readlink -f /sys/bus/platform/devices/$x/..)")
     echo "$d" > /sys/bus/platform/drivers/dwc3-apple/unbind
     echo "$d" > /sys/bus/platform/drivers/dwc3-apple/bind
-    echo "g15-usb: reset $d ($x took a Host System Error)" > /dev/kmsg
+    echo "m3-usb: reset $d ($x took a Host System Error)" > /dev/kmsg
 done
 exit 0
