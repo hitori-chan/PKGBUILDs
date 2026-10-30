@@ -1,0 +1,162 @@
+filter-graph: follow the plugins' latency ports while running
+
+LV2 and LADSPA plugins write their latency output port in run(), but the
+graph latency was computed once, right after activate(): 0 on a fresh start,
+the previous instance's values after a re-activation. Check the latency
+ports after each process cycle and recompute the latency in the main loop
+when one changed.
+
+Against PipeWire 1.6.10 (applies unchanged to 1.6.11).
+
+diff --git a/spa/plugins/filter-graph/filter-graph.c b/spa/plugins/filter-graph/filter-graph.c
+index 17f9f89..d375bbb 100644
+--- a/spa/plugins/filter-graph/filter-graph.c
++++ b/spa/plugins/filter-graph/filter-graph.c
+@@ -19,6 +19,7 @@
+ #include <spa/utils/string.h>
+ #include <spa/utils/json.h>
+ #include <spa/support/cpu.h>
++#include <spa/support/loop.h>
+ #include <spa/support/plugin-loader.h>
+ #include <spa/param/latency-utils.h>
+ #include <spa/param/tag-utils.h>
+@@ -120,6 +121,7 @@ struct node {
+ 
+ 	unsigned int n_deps;
+ 	uint32_t latency_index;
++	float latency;		/* last value seen on the latency port */
+ 
+ 	float min_latency;
+ 	float max_latency;
+@@ -221,6 +223,7 @@ struct impl {
+ 	struct spa_cpu *cpu;
+ 	struct spa_fga_dsp *dsp;
+ 	struct spa_plugin_loader *loader;
++	struct spa_loop *main_loop;
+ 
+ 	uint64_t info_all;
+ 	struct spa_filter_graph_info info;
+@@ -318,6 +321,9 @@ impl_add_listener(void *object,
+ 	return 0;
+ }
+ 
++static int do_latency_changed(struct spa_loop *loop, bool async, uint32_t seq,
++		const void *data, size_t size, void *user_data);
++
+ static int impl_process(void *object,
+ 		const void *in[], void *out[], uint32_t n_samples)
+ {
+@@ -325,6 +331,8 @@ static int impl_process(void *object,
+ 	struct graph *graph = &impl->graph;
+ 	uint32_t i, j, n_hndl = graph->n_hndl;
+ 	struct graph_port *port;
++	struct node *node;
++	bool latency_changed = false;
+ 
+ 	for (i = 0, j = 0; i < graph->n_inputs; i++) {
+ 		while (j < graph->n_input) {
+@@ -349,6 +357,20 @@ static int impl_process(void *object,
+ 		struct graph_hndl *hndl = &graph->hndl[i];
+ 		hndl->desc->run(*hndl->hndl, n_samples);
+ 	}
++	/* LV2 and LADSPA plugins write their latency port in run(): when it
++	 * changes, recalculate the graph latency in the main thread */
++	spa_list_for_each(node, &graph->node_list, link) {
++		float v;
++		if (node->latency_index == SPA_IDX_INVALID)
++			continue;
++		v = node->notify_port[node->latency_index].control_data[0];
++		if (v != node->latency && !isnan(v)) {
++			node->latency = v;
++			latency_changed = true;
++		}
++	}
++	if (latency_changed && impl->main_loop != NULL)
++		spa_loop_invoke(impl->main_loop, do_latency_changed, 0, NULL, 0, false, impl);
+ 	return 0;
+ }
+ 
+@@ -1583,6 +1605,7 @@ static struct node *sort_next_node(struct graph *graph)
+ }
+ 
+ static int setup_graph(struct graph *graph);
++static void update_latency(struct impl *impl);
+ 
+ static int impl_activate(void *object, const struct spa_dict *props)
+ {
+@@ -1596,7 +1619,7 @@ static int impl_activate(void *object, const struct spa_dict *props)
+ 	const struct spa_fga_plugin *p;
+ 	uint32_t i, j, max_samples = impl->quantum_limit, n_ports;
+ 	int res;
+-	float *sd, *dd, *data, min_latency, max_latency;
++	float *sd, *dd, *data;
+ 	const char *rate, *str;
+ 
+ 	if (graph->activated)
+@@ -1725,7 +1748,26 @@ static int impl_activate(void *object, const struct spa_dict *props)
+ 			if (node->control_changed && d->control_changed)
+ 				d->control_changed(node->hndl[i]);
+ 		}
++		if (node->latency_index != SPA_IDX_INVALID)
++			node->latency = node->notify_port[node->latency_index].control_data[0];
+ 	}
++	update_latency(impl);
++	spa_filter_graph_emit_props_changed(&impl->hooks, SPA_DIRECTION_INPUT);
++	return 0;
++error:
++	impl_deactivate(impl);
++	return res;
++}
++
++static void update_latency(struct impl *impl)
++{
++	struct graph *graph = &impl->graph;
++	struct node *node;
++	struct port *port;
++	struct link *link;
++	uint32_t i;
++	float min_latency, max_latency;
++
+ 	/* calculate latency */
+ 	sort_reset(graph);
+ 	while ((node = sort_next_node(graph)) != NULL) {
+@@ -1786,11 +1828,15 @@ static int impl_activate(void *object, const struct spa_dict *props)
+ 		impl->info.change_mask |= SPA_FILTER_GRAPH_CHANGE_MASK_PROPS;
+ 	}
+ 	emit_filter_graph_info(impl, false);
+-	spa_filter_graph_emit_props_changed(&impl->hooks, SPA_DIRECTION_INPUT);
++}
++
++static int do_latency_changed(struct spa_loop *loop, bool async, uint32_t seq,
++		const void *data, size_t size, void *user_data)
++{
++	struct impl *impl = user_data;
++	if (impl->graph.activated)
++		update_latency(impl);
+ 	return 0;
+-error:
+-	impl_deactivate(impl);
+-	return res;
+ }
+ 
+ static void unsetup_graph(struct graph *graph)
+@@ -2365,6 +2411,11 @@ static int impl_clear(struct spa_handle *handle)
+ {
+ 	struct impl *impl = (struct impl *) handle;
+ 
++	/* run the pending latency updates as no-ops before freeing */
++	impl->graph.activated = false;
++	if (impl->main_loop)
++		spa_loop_invoke(impl->main_loop, NULL, 0, NULL, 0, true, NULL);
++
+ 	graph_free(&impl->graph);
+ 
+ 	if (impl->dsp)
+@@ -2408,6 +2459,7 @@ impl_init(const struct spa_handle_factory *factory,
+ 	impl->dsp = spa_fga_dsp_new(impl->cpu ? spa_cpu_get_flags(impl->cpu) : 0);
+ 
+ 	impl->loader = spa_support_find(support, n_support, SPA_TYPE_INTERFACE_PluginLoader);
++	impl->main_loop = spa_support_find(support, n_support, SPA_TYPE_INTERFACE_Loop);
+ 
+ 	spa_list_init(&impl->plugin_list);
+ 

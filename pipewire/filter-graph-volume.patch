@@ -1,0 +1,62 @@
+filter-graph: always pass the soft volume when the graph applies the volume
+
+impl_set_props() added softVolumes/softMute only when the channelVolumes or
+mute differed from the graph's own copy. A Props that repeats the current
+volume, or carries mute alone, reached audioconvert with channelVolumes and
+no softVolumes, so audioconvert applied the channelVolumes in software as
+well as the graph's control, until the next real volume change.
+
+Against PipeWire 1.6.10 (applies unchanged to 1.6.11, with or without
+filter-graph-latency.patch).
+
+diff --git a/spa/plugins/filter-graph/filter-graph.c b/spa/plugins/filter-graph/filter-graph.c
+index 17f9f89..f978d8f 100644
+--- a/spa/plugins/filter-graph/filter-graph.c
++++ b/spa/plugins/filter-graph/filter-graph.c
+@@ -765,7 +765,7 @@ static int impl_set_props(void *object, enum spa_direction direction, const stru
+ 	float soft_vols[MAX_CHANNELS];
+ 	uint32_t n_soft_vols = 0;
+ 	bool soft_mute = false, have_soft_mute = false;
+-	bool do_volume = false;
++	bool do_volume = false, have_volume = false;
+ 
+ 	spa_pod_dynamic_builder_init(&b, buf, sizeof(buf), 1024);
+ 	spa_pod_builder_push_object(&b.b, &f[0], SPA_TYPE_OBJECT_Props, SPA_PARAM_Props);
+@@ -780,6 +780,7 @@ static int impl_set_props(void *object, enum spa_direction direction, const stru
+ 		{
+ 			bool mute;
+ 			if (spa_pod_get_bool(&prop->value, &mute) == 0) {
++				have_volume = true;
+ 				if (vol->mute != mute) {
+ 					vol->mute = mute;
+ 					do_volume = true;
+@@ -795,6 +796,7 @@ static int impl_set_props(void *object, enum spa_direction direction, const stru
+ 
+ 			if ((n_vols = spa_pod_copy_array(&prop->value, SPA_TYPE_Float, vols,
+ 					SPA_N_ELEMENTS(vols))) > 0) {
++				have_volume = true;
+ 				if (vol->n_volumes != n_vols)
+ 					do_volume = true;
+ 				vol->n_volumes = n_vols;
+@@ -822,7 +824,10 @@ static int impl_set_props(void *object, enum spa_direction direction, const stru
+ 			break;
+ 		}
+ 	}
+-	if (do_volume && vol->n_ports != 0) {
++	/* when the graph applies the volume, always pass the soft volume with
++	 * it, also when it did not change: without softVolumes, audioconvert
++	 * applies the channelVolumes once more in software */
++	if (have_volume && vol->n_ports != 0) {
+ 		uint32_t i;
+ 
+ 		for (i = 0; i < vol->n_volumes; i++)
+@@ -831,7 +836,8 @@ static int impl_set_props(void *object, enum spa_direction direction, const stru
+ 		soft_mute = vol->mute;
+ 		have_soft_mute = true;
+ 
+-		sync_volume(graph, vol);
++		if (do_volume)
++			sync_volume(graph, vol);
+ 	}
+ 	if (have_soft_mute) {
+ 		spa_pod_builder_prop(&b.b, SPA_PROP_softMute, 0);
