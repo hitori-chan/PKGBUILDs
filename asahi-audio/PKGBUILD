@@ -5,7 +5,7 @@
 pkgname=asahi-audio
 _commit=ab1b46928d056bb02bb4ad72d522dab57dc9efe1
 pkgver=5.0.r2.g${_commit::8}
-pkgrel=1
+pkgrel=2
 pkgdesc='Linux Userspace Audio Configuration'
 arch=('aarch64')
 url='http://asahilinux.org'
@@ -20,6 +20,9 @@ sha256sums=('SKIP')
 build() {
   cd "${srcdir}/${pkgname}-${_commit}"
   make
+  sed -i -e 's/^\(\s*\)"node.passive": "true",/\1"node.passive": "true",\n\1"node.pause-on-idle": "false",/' \
+    -e 's/^\(\s*\)"priority.session": 850,/\1"priority.session": 850,\n\1"node.pause-on-idle": "false",/' \
+    firs/j314/graph-j514.json
 }
 
 package() {
