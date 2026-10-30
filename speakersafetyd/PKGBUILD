@@ -4,7 +4,7 @@
 
 pkgname=speakersafetyd
 pkgver=3.0.0
-pkgrel=1
+pkgrel=2
 pkgdesc='Asahi Linux speaker safety daemon'
 arch=('aarch64')
 url='http://asahilinux.org'
@@ -14,6 +14,12 @@ source=(
   "speakersafetyd-${pkgver}.tar.gz::https://github.com/AsahiLinux/speakersafetyd/archive/${pkgver}.tar.gz"
 )
 sha256sums=('f83319140e5d2d04dc33f3481bc9710d651d1e9f330512e89ee14874f3154ea0')
+
+prepare() {
+  cd "${srcdir}/speakersafetyd-${pkgver}/conf/apple"
+  rm j514.conf
+  awk '/^\[/ { w = /Woofer/ } w && $0 == "t_limit = 140.0" { $0 = "t_limit = 130.0" } 1' j314.conf > j514.conf
+}
 
 build() {
   cd "${srcdir}/speakersafetyd-${pkgver}"
