@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=e1870ae97de833165936c17f5b09f58244851eca
+_commit=796cca054390159e1cb68a74f363398c154730c0
 _kver=7.2.13
-_rev=170
+_rev=171
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -30,7 +30,7 @@ source=(
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
-            'b28f1c720d38bc932a9ed261b1dc4e9663da0be2bb4a83bf402d07992d21a929'
+            '57912cecadff68b1615fbbf9fd5d26ad78936e54506b4a30ee83999ae2f3f82e'
             'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555'
             '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72')
 export LLVM=1
