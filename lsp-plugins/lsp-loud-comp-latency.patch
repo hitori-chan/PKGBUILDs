@@ -1,0 +1,33 @@
+loud_comp: report the latency of the FFT size in use
+
+update_settings() read the spectral processor's latency before giving it
+the new rank, so the dry delay and the reported latency were the previous
+rank's.  After init() that is FFT_RANK_MAX (16384 samples), which the
+8704-sample dry delay wraps to 7680: the plugin reported 7680 until a
+control changed.  Take the latency after set_rank(), and size the dry
+delay for the largest FFT, which the 16384 setting needs.
+
+--- a/modules/lsp-plugins-loud-comp/src/main/plug/loud_comp.cpp
++++ b/modules/lsp-plugins-loud-comp/src/main/plug/loud_comp.cpp
+@@ -199,7 +199,7 @@
+                 c->sEqualizer.construct();
+                 c->sClipInd.construct();
+ 
+-                c->sDelay.init(1 << (meta::loud_comp_metadata::FFT_RANK_MAX - 1));
++                c->sDelay.init(1 << meta::loud_comp_metadata::FFT_RANK_MAX);
+                 c->sProc.init(meta::loud_comp_metadata::FFT_RANK_MAX);
+                 c->sProc.bind(process_callback, this, c);
+                 c->sProc.set_phase(0.5f * i);
+@@ -471,11 +471,11 @@
+             for (size_t i=0; i<nChannels; ++i)
+             {
+                 channel_t *c            = vChannels[i];
+-                const size_t latency    = (nMode == meta::loud_comp_metadata::MODE_FFT) ? c->sProc.latency() : c->sEqualizer.get_latency();
+ 
+                 c->sBypass.set_bypass(bypass);
+                 c->sProc.set_rank(rank);
+ 
++                const size_t latency    = (nMode == meta::loud_comp_metadata::MODE_FFT) ? c->sProc.latency() : c->sEqualizer.get_latency();
+                 c->sDelay.set_delay(latency);
+                 if (rst_clip)
+                     c->bHClip       = false;
