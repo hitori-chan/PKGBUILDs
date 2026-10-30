@@ -15,7 +15,7 @@ _desc="AArch64 Apple Silicon (M3 Max GPU development kernel)"
 pkgver=${_kver}.r${_rev}.g${_commit::12}
 arch=('aarch64')
 url="https://github.com/hitori-chan/linux"
-license=('GPL2')
+license=('GPL-2.0-only')
 
 makedepends=(
   base-devel bc clang dtc kmod libelf lld llvm pahole cpio perl rustup rust-bindgen tar xz xmlto python
