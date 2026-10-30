@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=4ffecd4f91724adf64dfe82ee8cb7d339d2d3472
+_commit=679ff971e6c08d33417ea0cd6349d02369c2dc92
 _kver=7.2.13
-_rev=167
+_rev=168
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -26,11 +26,13 @@ source=(
   config
   config.m3
   m3-usb.sleep
+  m3-thp.conf
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
-            'e701c05b3aab3ca7ce4c2e16400d1e367eb49659b430c41752ff0afa41a0e8c1'
-            'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555')
+            'b28f1c720d38bc932a9ed261b1dc4e9663da0be2bb4a83bf402d07992d21a929'
+            'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555'
+            '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -96,6 +98,7 @@ _package_kernel() {
   install -Dt "$modulesdir/dtbs" "$O"/arch/arm64/boot/dts/apple/*.dtb
 
   install -Dm755 "$srcdir/m3-usb.sleep" "$pkgdir/usr/lib/systemd/system-sleep/m3-usb"
+  install -Dm644 "$srcdir/m3-thp.conf" "$pkgdir/usr/lib/tmpfiles.d/m3-thp.conf"
 
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
