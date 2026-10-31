@@ -26,15 +26,15 @@ pkgname=(
   mesa-docs
 )
 _tree=mesa
-_commit=dc4d57566d48ab8a5dfd6a54d9c3bb0c448db092
+_commit=15486c81b7afe70c0466f4fafcaa671fab076e37
 _srcname=mesa-$_commit
-pkgver=27.0.0_devel.r267.g${_commit::11}
+pkgver=27.0.0_devel.r268.g${_commit::11}
 pkgrel=1
 epoch=1
 pkgdesc="Open-source OpenGL drivers"
 url="https://github.com/hitori-chan/mesa"
 arch=(aarch64)
-license=("MIT AND BSD-3-Clause AND SGI-B-2.0")
+license=("MIT AND BSD-3-Clause AND SGI-B-2.0 AND GPL-2.0-only")
 makedepends=(
   clang
   directx-headers
