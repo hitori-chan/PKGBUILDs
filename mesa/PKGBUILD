@@ -26,9 +26,9 @@ pkgname=(
   mesa-docs
 )
 _tree=mesa
-_commit=15486c81b7afe70c0466f4fafcaa671fab076e37
+_commit=3a7a574a6f818b902ff999b4b57ad1198ab70505
 _srcname=mesa-$_commit
-pkgver=27.0.0_devel.r268.g${_commit::11}
+pkgver=27.0.0_devel.r269.g${_commit::11}
 pkgrel=1
 epoch=1
 pkgdesc="Open-source OpenGL drivers"
