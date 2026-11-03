@@ -4,7 +4,7 @@ _tree=linux
 _commit=ab09c9b57c8351b4f621e5c14ced424a05822cfe
 _kver=7.2.14
 _rev=178
-pkgrel=1
+pkgrel=2
 
 _m1n1_version=1.9.9
 
@@ -27,12 +27,14 @@ source=(
   config.m3
   m3-usb.sleep
   m3-thp.conf
+  m3-rt.conf
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
             '57912cecadff68b1615fbbf9fd5d26ad78936e54506b4a30ee83999ae2f3f82e'
             'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555'
-            '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72')
+            '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72'
+            '4d8a8f8b3b96f4d0c75892d5e6060c6b11cbcedf20702e74b8591e80b3fa94b7')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -99,6 +101,7 @@ _package_kernel() {
 
   install -Dm755 "$srcdir/m3-usb.sleep" "$pkgdir/usr/lib/systemd/system-sleep/m3-usb"
   install -Dm644 "$srcdir/m3-thp.conf" "$pkgdir/usr/lib/tmpfiles.d/m3-thp.conf"
+  install -Dm644 "$srcdir/m3-rt.conf" "$pkgdir/usr/lib/sysctl.d/m3-rt.conf"
 
   # remove build and source links
   rm -f "$modulesdir"/{source,build}
