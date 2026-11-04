@@ -1,0 +1,12 @@
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/share/fex-emu/RootFS/*
+Target = usr/share/fex-emu/overlays/*
+
+[Action]
+Description = Remounting FEX's root filesystem...
+When = PostTransaction
+Exec = /usr/bin/systemctl restart fex-rootfs.service

@@ -1,0 +1,12 @@
+[Unit]
+Description=FEX's root filesystem with Mesa's overlays
+ConditionPathExists=/usr/share/fex-emu/RootFS/default.erofs
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/fex-emu/fex-rootfs.sh
+ExecStop=/usr/lib/fex-emu/fex-rootfs.sh stop
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,112 @@
+# Maintainer: Jos Dehaes <jos.dehaes@gmail.com>
+# Maintainer: Matthias Kurz <m.kurz@irregular.at>
+
+pkgbase=FEX-Emu
+pkgname=FEX-Emu
+_fex=02e24ca5c01ed0c864466ed573db347336f70170
+pkgver=2604.1
+pkgrel=1
+pkgdesc="Fast x86 emulation frontend"
+arch=(aarch64)
+url="https://github.com/FEX-Emu/FEX"
+license=(MIT)
+makedepends=(
+  pkgconf
+  cmake
+  nasm
+  catch2
+  ninja
+  fmt
+  git
+  sed
+  lld
+  llvm
+  clang
+  libepoxy
+  python
+  qt6-declarative
+  python-packaging
+  python-setuptools
+  xxhash
+  libepoxy
+  sdl2-compat
+  libx11
+  libxrandr
+  wayland
+)
+depends=(
+  passt
+  squashfuse
+  squashfs-tools
+  erofs-utils
+  fmt
+)
+source=("git+https://github.com/FEX-Emu/FEX.git#commit=${_fex}"
+        "cmake.patch"
+        "16k.patch"
+        "Config.json"
+        "fex-rootfs.hook"
+        "fex-rootfs.service"
+        "fex-rootfs.sh")
+sha256sums=('SKIP'
+            '3f66fc27d99b463ac2116d321ea626a9f0be5c3ddad544911b6db66545f8ddcc'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+install=FEX-Emu.install
+
+prepare() {
+  cd "${srcdir}/FEX"
+  # Needed because the repo has submodules
+  git submodule update --init --recursive
+
+  patch -p1 < ../../cmake.patch
+  patch -p1 < ../../16k.patch
+  sed -i 's/^#define LG_PAGE .*/#define LG_PAGE 14/; s/^#define LG_HUGEPAGE .*/#define LG_HUGEPAGE 25/' \
+    External/jemalloc_glibc/pregen/include/jemalloc/internal/jemalloc_internal_defs.h
+  # For cherry-picking we need a git user with name and e-mail as committer
+  # (do not use the --global flag!)
+  git config user.name "John Doe"
+  git config user.email "john.doe@example.com"
+  #git cherry-pick <sha>
+}
+
+build() {
+  cd ${srcdir}/FEX
+  rm -rf build
+  mkdir -p build || true
+  cd build
+  CC=clang CXX=clang++ cmake \
+    -G Ninja \
+    -DENABLE_OFFLINE_TELEMETRY=OFF \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DUSE_LINKER=lld \
+    -DENABLE_LTO=ON \
+    -DBUILD_TESTING=FALSE \
+    -DENABLE_ASSERTIONS=OFF \
+    -DTUNE_CPU=apple-m3 \
+    -DTUNE_ARCH=armv8.6-a \
+    ..
+  ninja
+  if objdump -d Bin/FEXInterpreter | grep cnth; then
+      echo "::error file=fex-emu::Found illegal instruction 'cnth'"
+      exit 1
+  fi
+}
+
+package() {
+  cd ${srcdir}/FEX/build
+  DESTDIR="${pkgdir}" ninja install
+  mkdir -p "${pkgdir}"/usr/share/fex-emu/RootFS
+  mkdir -p "${pkgdir}"/usr/share/fex-emu/overlays
+  cd "${srcdir}"
+  install -Dm644 Config.json "${pkgdir}"/usr/share/fex-emu/Config.json
+  install -Dm755 fex-rootfs.sh "${pkgdir}"/usr/lib/fex-emu/fex-rootfs.sh
+  install -Dm644 fex-rootfs.service "${pkgdir}"/usr/lib/systemd/system/fex-rootfs.service
+  install -Dm644 fex-rootfs.hook "${pkgdir}"/usr/share/libalpm/hooks/fex-rootfs.hook
+  install -d "${pkgdir}"/usr/lib/systemd/system/multi-user.target.wants
+  ln -s ../fex-rootfs.service "${pkgdir}"/usr/lib/systemd/system/multi-user.target.wants/fex-rootfs.service
+}
