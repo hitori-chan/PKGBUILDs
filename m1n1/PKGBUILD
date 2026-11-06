@@ -2,8 +2,8 @@
 
 pkgname=m1n1
 _tree=m1n1
-_commit=e26be4bb8cffc78c13706c6f22b4ab74d6ef94d9
-pkgver=2.0.0.r72.g${_commit::8}
+_commit=05b4d24cd623bd171cd5b416dd73dec2ca6af28d
+pkgver=2.0.0.r73.g${_commit::8}
 pkgrel=1
 pkgdesc='Asahi Linux bootloader'
 _artwork_commit_id=80d14f8b6f485b310e305a84b4b806361518ddd1
