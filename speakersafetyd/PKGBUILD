@@ -3,30 +3,31 @@
 # Contributor: Matthias Kurz <m.kurz@irregular.at>
 
 pkgname=speakersafetyd
-pkgver=3.0.0
-pkgrel=2
+pkgver=3.0.0.r3.ga87e6da5
+_commit=a87e6da5627150edd3ac45c622739c5998ebc3a1
+pkgrel=1
 pkgdesc='Asahi Linux speaker safety daemon'
 arch=('aarch64')
 url='http://asahilinux.org'
 depends=('alsa-lib')
 license=('GPL-2.0-only')
 source=(
-  "speakersafetyd-${pkgver}.tar.gz::https://github.com/AsahiLinux/speakersafetyd/archive/${pkgver}.tar.gz"
+  "speakersafetyd-${pkgver}.tar.gz::https://github.com/AsahiLinux/speakersafetyd/archive/${_commit}.tar.gz"
 )
-sha256sums=('f83319140e5d2d04dc33f3481bc9710d651d1e9f330512e89ee14874f3154ea0')
+sha256sums=('115c95e28c1a769d4eb445e0f34722296635f30936d11ee8e5ebd8748358eca0')
 
 prepare() {
-  cd "${srcdir}/speakersafetyd-${pkgver}/conf/apple"
+  cd "${srcdir}/speakersafetyd-${_commit}/conf/apple"
   rm j514.conf
   awk '/^\[/ { w = /Woofer/ } w && $0 == "t_limit = 140.0" { $0 = "t_limit = 130.0" } 1' j314.conf > j514.conf
 }
 
 build() {
-  cd "${srcdir}/speakersafetyd-${pkgver}"
+  cd "${srcdir}/speakersafetyd-${_commit}"
   make
 }
 
 package() {
-  cd "${srcdir}/speakersafetyd-${pkgver}"
+  cd "${srcdir}/speakersafetyd-${_commit}"
   make DESTDIR="${pkgdir}" UNITDIR=/usr/lib/systemd/system UDEVDIR=/usr/lib/udev/rules.d install
 }
