@@ -1,0 +1,34 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+# Contributor: Jos Dehaes <jos.dehaes@gmail.com>
+# Contributor: Matthias Kurz <m.kurz@irregular.at>
+
+pkgname=triforce-lv2
+pkgver=0.4.0
+pkgrel=1
+pkgdesc='a beamformer for Apple Silicon laptops'
+arch=('aarch64')
+url='https://github.com/chadmed/triforce'
+depends=('lv2' 'gcc-libs' 'glibc')
+makedepends=('cargo')
+license=('GPL-2.0-or-later')
+source=(
+  "triforce-lv2-${pkgver}.tar.gz::https://github.com/chadmed/triforce/archive/refs/tags/${pkgver}.tar.gz"
+)
+sha256sums=('c5b777a3c87bda5a88aeab2bd862324b27f49528455ec81c5fd5220c0c7a4861')
+
+prepare() {
+  cd "${srcdir}/triforce-${pkgver}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "${srcdir}/triforce-${pkgver}"
+  export RUSTUP_TOOLCHAIN=stable CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+package() {
+  cd "${srcdir}/triforce-${pkgver}"
+  make LIBDIR=/usr/lib DESTDIR="${pkgdir}" install
+}
