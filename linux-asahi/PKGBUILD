@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=1c65e31bc30932fc709a6e9dbd4de8062febcd35
+_commit=76d30a46a7bd6af3a323222feea0438b5ca67143
 _kver=7.3.3
-_rev=204
+_rev=205
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -28,13 +28,15 @@ source=(
   m3-usb.sleep
   m3-thp.conf
   m3-rt.conf
+  m3-sep.conf
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
             'e34c2fd6efcfd5cb6b615594be7d54ddf8d9130eff1846541ac49eadf5cf3c3f'
             'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555'
             '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72'
-            '4d8a8f8b3b96f4d0c75892d5e6060c6b11cbcedf20702e74b8591e80b3fa94b7')
+            '4d8a8f8b3b96f4d0c75892d5e6060c6b11cbcedf20702e74b8591e80b3fa94b7'
+            '1167ac1ee17a60bde012bcd3a72c0dfd18e73d20d07c99cc95b044567bbd0de3')
 export LLVM=1
 export KBUILD_BUILD_HOST=archlinux
 export KBUILD_BUILD_USER=$pkgbase
@@ -102,6 +104,7 @@ _package_kernel() {
 
   install -Dm755 "$srcdir/m3-usb.sleep" "$pkgdir/usr/lib/systemd/system-sleep/m3-usb"
   install -Dm644 "$srcdir/m3-thp.conf" "$pkgdir/usr/lib/tmpfiles.d/m3-thp.conf"
+  install -Dm644 "$srcdir/m3-sep.conf" "$pkgdir/usr/lib/tmpfiles.d/m3-sep.conf"
   install -Dm644 "$srcdir/m3-rt.conf" "$pkgdir/usr/lib/sysctl.d/m3-rt.conf"
 
   # remove build and source links
