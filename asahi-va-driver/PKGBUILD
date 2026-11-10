@@ -1,0 +1,29 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+
+pkgname=asahi-va-driver
+_tree=asahi-va-driver
+_commit=5c07483761a29c9b5c1cea1b040d103d25b2fbd6
+pkgver=2.0.r8
+pkgrel=1
+pkgdesc='VA-API driver for V4L2 stateless decoders, for the Apple Video Decoder'
+arch=('aarch64')
+url='https://github.com/hitori-chan/asahi-va-driver'
+depends=('libva' 'libdrm')
+makedepends=('meson' 'linux-api-headers')
+license=('GPL-3.0-or-later')
+provides=('libva-driver')
+conflicts=('libva-v4l2-request' 'libva-v4l2_request' 'libva-v4l2_request-avd')
+replaces=('libva-v4l2-request')
+source=(
+  "asahi-va-driver-${_commit}.tar.gz::https://github.com/hitori-chan/asahi-va-driver/archive/${_commit}.tar.gz"
+)
+sha256sums=('59a687605793f0be4687f35211fc379b3edd477a95b7b58dab2e8ec4bdb5f58f')
+
+build() {
+  arch-meson "asahi-va-driver-${_commit}" build
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "${pkgdir}"
+}
