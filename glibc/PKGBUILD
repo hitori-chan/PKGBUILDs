@@ -10,7 +10,7 @@ pkgbase=glibc
 pkgname=(glibc lib32-glibc glibc-locales)
 pkgver=2.44+r58+g045c51476c7a
 _commit=045c51476c7abf6144815a4db44f51a118b4cb3e
-pkgrel=2
+pkgrel=3
 arch=(x86_64 aarch64)
 url='https://www.gnu.org/software/libc'
 license=(GPL-2.0-or-later LGPL-2.1-or-later)
@@ -44,6 +44,7 @@ source=(
   12-lib32-glibc-iconvconfig.hook
   12-lib32-glibc-remove-iconvconfig-cache.hook
   aarch64-apple-memcpy.patch
+  aarch64-cpu-name.patch
 )
 validpgpkeys=(7273542B39962DF7B299931416792B4EA25340F8 # Carlos O'Donell
               BC7C7372637EC10C57D7AA6579C43DFBF1CF2187) # Siddhesh Poyarekar
@@ -63,7 +64,8 @@ b2sums=('73f7ccc324aac0c0c600882e9e5b50030bf81bbb01af705c606a61cdf32b8effdc5427b
         '55ca66ad10e5e8ecb7f205acd009a3ca945c27894047e1ace20866a14d5dd9f2b97e23e6da678877363c2963a6fc2ef83030b4f5de6d7bf84da88bd7434c5596'
         'a6fa4b559b4b701b8fcee294d0a30371de233ba5cb3a08f915b9aa9be42e08e70814a71f74b9e87e8936a847b621fac0b282e8260ea3d728a26ce879953ff17f'
         '8836f747a59cab143679eb751bc67f79b2bd1057f2108a984e63905b8404caeeec5f2e01bfbb42e83e1c7d24e2b10731a9abab4b8b472588e9196c1d519ac3e2'
-        '2a3490a8eaa4a0d1d06c4d694e3f06320a6aaf037a9035d51386b08fbcb95278ccbb14ff4b7b47295f527d96d162c4b66f5dc5c6cad93ec3fb61d00ab1e1bf94')
+        '2a3490a8eaa4a0d1d06c4d694e3f06320a6aaf037a9035d51386b08fbcb95278ccbb14ff4b7b47295f527d96d162c4b66f5dc5c6cad93ec3fb61d00ab1e1bf94'
+        '8c828e4405df277fe8fb48475372382a96d9ac775b2395e26af26265e313aaa796f32db0763720ae2a58d2e64ade4f19e00d3d61841bdc97b0fb047882347236')
 
 pkgver() {
   cd glibc
@@ -76,6 +78,7 @@ prepare() {
   [[ -d glibc-$pkgver ]] && ln -s glibc-$pkgver glibc
   cd glibc
   git apply -3 ../aarch64-apple-memcpy.patch
+  git apply -3 ../aarch64-cpu-name.patch
 }
 
 build() {

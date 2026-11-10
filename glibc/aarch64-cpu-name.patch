@@ -1,0 +1,24 @@
+aarch64: glibc.cpu.name matches every name, not only the first
+
+get_midr_from_mcpu compared each entry at an offset that skipped no NUL and
+compared every entry with the first name's length (6adb7400fd, BZ 34205), so
+only "kunpeng920" ever matched: glibc.cpu.name=generic left the MIDR as read.
+
+--- a/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
++++ b/sysdeps/unix/sysv/linux/aarch64/cpu-features.c
+@@ -51,13 +51,12 @@
+ get_midr_from_mcpu (const struct tunable_str_t *mcpu)
+ {
+   const char *name = cpu_list_name;
+-  size_t offset = 0;
+   for (int i = 0; i < array_length (cpu_list_midr); i++)
+     {
+       size_t len = strlen (name);
+-      if (tunable_strcmp (mcpu, cpu_list_name + offset, len))
++      if (tunable_strcmp (mcpu, name, len))
+ 	return cpu_list_midr[i];
+-      offset += len;
++      name += len + 1;
+     }
+   return UINT64_MAX;
+ }
