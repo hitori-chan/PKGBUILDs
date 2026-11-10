@@ -1,0 +1,58 @@
+# Maintainer: Jan Alexander Steffens (heftig) <heftig@archlinux.org>
+# Contributor: Nikolay Rysev <mad.f3ka@gmail.com>
+
+pkgname=fprintd
+_commit=952aa76f1efab92715c58f7974feea807ca4d430
+_srcname=fprintd-$_commit
+pkgver=1.94.5.r1.g${_commit::8}
+pkgrel=1
+pkgdesc="D-Bus service to access fingerprint readers"
+url="https://github.com/hitori-chan/fprintd"
+arch=(aarch64)
+license=("GPL-2.0-or-later")
+depends=(
+  dbus
+  glib2
+  glibc
+  libgcc
+  libfprint
+  pam
+  polkit
+  systemd
+  systemd-libs
+)
+makedepends=(
+  glib2-devel
+  gtk-doc
+  meson
+  pam_wrapper
+  python-cairo
+  python-dbus
+  python-dbusmock
+  python-packaging
+)
+groups=(fprint)
+source=("$_srcname.tar.gz::https://github.com/hitori-chan/fprintd/archive/$_commit.tar.gz")
+sha256sums=('0e7c739f37732f866d9a587ce722c4a1096428cb6e2edf63969df841dd5ca69d')
+
+build() {
+  local meson_options=(
+    -D gtk_doc=true
+    -D pam_modules_dir=/usr/lib/security
+  )
+
+  arch-meson $_srcname build "${meson_options[@]}"
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  depends+=(libfprint-2.so)
+
+  meson install -C build --destdir "$pkgdir"
+}
+
+# vim:set sw=2 sts=-1 et:

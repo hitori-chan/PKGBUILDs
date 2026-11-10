@@ -1,0 +1,33 @@
+# Maintainer: hitori-chan
+# asahi-alarm's asahi-scripts 20261023 with the fork's m3 branch: the asahi mkinitcpio hook's vendor firmware under
+# systemd's initramfs (a unit after the systemd hook, as dracut's 99asahi-firmware does), and the apple-sep hook: a
+# Touch ID keybag for the SEP driver's FIDO2 authenticator in the initramfs.
+
+pkgname=asahi-scripts
+_base=20261023
+_commit=24534f17419b3152b6169231d443e506b5d384f1
+pkgver=${_base}.1
+pkgrel=1
+pkgdesc='Asahi Linux maintenance scripts'
+arch=('any')
+url='https://github.com/hitori-chan/asahi-scripts'
+license=('MIT')
+source=("${pkgname}-${_commit}.tar.gz::https://github.com/hitori-chan/${pkgname}/archive/${_commit}.tar.gz")
+install=asahi-scripts.install
+sha256sums=('57b72e340ece06193cab14f338f4ad1700e973c7786a08f02a2ae4d303d80034')
+
+build() {
+  cd "${srcdir}/${pkgname}-${_commit}"
+
+  make PREFIX=/usr DESTDIR=${pkgdir} all
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${_commit}"
+
+  make PREFIX=/usr DESTDIR=${pkgdir} install-arch
+  # re-add DTBS variable
+  sed -i -e '/${CONFIG/i : ${DTBS:=$(/bin/ls -d /lib/modules/*-ARCH | sort -rV | head -1)/dtbs/*.dtb}' "$pkgdir/usr/bin/update-m1n1"
+  install -Dm644 "$srcdir/${pkgname}-${_commit}/LICENSE" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
