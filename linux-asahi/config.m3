@@ -12,3 +12,6 @@ CONFIG_VIDEO_APPLE_AVE=m
 CONFIG_DRM_ACCEL_APPLE_ANE=m
 CONFIG_KPROBE_EVENTS_ON_NOTRACE=y
 CONFIG_MAILBOX=y
+# trusted keys sealed by the SEP (keyctl add trusted; built in, so the built-in encrypted keys take one as their master)
+CONFIG_TRUSTED_KEYS=y
+CONFIG_TRUSTED_KEYS_APPLE_SEP=y

@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=6f65d9fb689cabcf30aafc4023356064ab394185
+_commit=b0789456ccc7d4c2ac9ece7514f327164549752c
 _kver=7.3.3
-_rev=202
+_rev=203
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -31,7 +31,7 @@ source=(
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
-            'beaf94c28b8b77e4ca3401197cc8618f6b29768f98fd8336b82d94390b054413'
+            'e34c2fd6efcfd5cb6b615594be7d54ddf8d9130eff1846541ac49eadf5cf3c3f'
             'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555'
             '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72'
             '4d8a8f8b3b96f4d0c75892d5e6060c6b11cbcedf20702e74b8591e80b3fa94b7')
@@ -80,7 +80,8 @@ _package_kernel() {
               'linux-firmware: firmware images needed for some devices')
   provides=(WIREGUARD-MODULE linux=${pkgver})
   replaces=(wireguard-arch)
-  conflicts=($pkgbase-edge)
+  # our first libfprint refuses /dev/apple-sep-bio's interface 5 (r203): Touch ID would be lost
+  conflicts=($pkgbase-edge 'libfprint=1.94.100.r1.gd1e86d99')
 
   local kernver="$(<$O/version)"
   local modulesdir="$pkgdir/usr/lib/modules/$kernver"
