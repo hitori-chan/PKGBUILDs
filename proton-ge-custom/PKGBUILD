@@ -1,0 +1,97 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+
+_ge=GE-Proton11-12
+_wine=fda79a585939fb7512dc220a11249f9ffe825fcf
+_fex=02e24ca5c01ed0c864466ed573db347336f70170
+_staging=6cc805ea57132eeaf44764e9213823c9b8d0d300
+_mingw=llvm-mingw-20261020-ucrt-ubuntu-22.04-aarch64
+pkgname=proton-ge-custom
+pkgver=11.12
+pkgrel=2
+pkgdesc='GE-Proton on a 16K kernel with per-process page sizes (P3S): its aarch64 release, Wine as a 4K process, our fixes'
+arch=('aarch64')
+url='https://github.com/GloriousEggroll/proton-ge-custom'
+license=('BSD-3-Clause' 'LGPL-2.1-or-later' 'MIT')
+depends=('python')
+makedepends=('autoconf' 'bison' 'clang' 'cmake' 'flex' 'git' 'libxkbcommon' 'lld' 'llvm' 'ninja' 'perl' 'wayland')
+options=('!debug' '!lto' '!strip')
+source=("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$_ge/$_ge-aarch64.tar.gz"
+        "https://github.com/GloriousEggroll/proton-ge-custom/archive/refs/tags/$_ge.tar.gz"
+        "wine::git+https://github.com/ValveSoftware/wine.git#commit=$_wine"
+        "wine-staging::git+https://github.com/wine-staging/wine-staging.git#commit=$_staging"
+        "FEX::git+https://github.com/FEX-Emu/FEX.git#commit=$_fex"
+        "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/$_mingw.tar.xz"
+        'wine-0003-ntdll-RtlIsEcCode-of-a-wild-pointer.patch'
+        'wine-0004-ntdll-an-alert-a-WoW64-thread-s-host-side-took.patch'
+        'wine-0005-ntdll-NtYieldExecution-sleeps.patch'
+        'wine-0006-ntdll-4K-pages-on-a-kernel-with-per-process-page-sizes.patch'
+        'fex-0004-ARM64EC-no-FPCR-write-at-exit-when-nothing-changes.patch'
+        'proton-0001-FEX-full-x87-for-installers-in-every-game.patch')
+sha256sums=('cbf85e13a6a500cb6747881620b061faccf3c93e05e2102c6b5e992d5aa44c78'
+            'be1ee9e60fabac4cbd0babb8f9db594d8d061def85c99ae54e32b1971cf8418f'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'ca16bb0f4f485876496fa46ad8d353c525eba57d0cf9e9e49ec1738fe4810151'
+            'b6d0c3994d9e8be93135be71288cb7823404058d8c66d9b82bdf367ad325b2a0'
+            '8a366608d4ab0dfa1ebf4aaa50779e61fdaa8c238e00fdc0e83860fb1640cb15'
+            'a60013c81a6eaceb1e1570c3559c86ca40a3ad7a1de3841b48afa77ee40da82a'
+            '7287f5cd491a03f57d553f76fa2774dee9e93d729c245425c58c0310b58680c3'
+            '82864da863f1375305e813b7f8935d44a6dbacc8dfb6d2a94c9b9d5f394d3a0e'
+            'e5102051626a43e503d1cc908af3764b076fd5c838236fd7f406f5c9318ae29e')
+
+prepare() {
+    ln -sfn "proton-ge-custom-$_ge/patches" patches
+    ln -sfn "proton-ge-custom-$_ge/wineopenxr" wineopenxr
+    { sed -n 1,14p patches/protonprep-valve-staging.sh; sed -n 122,691p patches/protonprep-valve-staging.sh; } > wine-prep.sh
+    bash wine-prep.sh
+
+    cd wine
+    find . -name '*.orig' -delete
+    XDG_CACHE_HOME="$srcdir/cache" dlls/winevulkan/make_vulkan -x vk.xml -X video.xml
+    tools/make_specfiles
+    for p in "$srcdir"/wine-*.patch; do
+        patch -Np1 -i "$p"
+    done
+
+    cd ../FEX
+    git submodule update --init --recursive --depth 1
+    for p in "$srcdir"/fex-*.patch; do
+        patch -Np1 -i "$p"
+    done
+}
+
+build() {
+    unset CFLAGS CXXFLAGS LDFLAGS
+    mkdir -p wine-build
+    (
+        cd wine-build
+        ../wine/configure --enable-archs=arm64ec,aarch64,i386 --with-mingw=clang --disable-tests --with-wayland
+        make dlls/ntdll/all
+    )
+
+    export PATH="$srcdir/$_mingw/bin:$PATH"
+    local a="-DCMAKE_BUILD_TYPE=Release -DENABLE_FEXCORE_PROFILER=True -DENABLE_LTO=False -DBUILD_TESTING=False"
+    a+=" -DENABLE_JEMALLOC_GLIBC_ALLOC=False -DTUNE_CPU=none -DTUNE_ARCH=armv8.5-a -DCMAKE_TOOLCHAIN_FILE=$srcdir/FEX/Data/CMake/toolchain_mingw.cmake"
+    a+=" -DOVERRIDE_VERSION=$(git -C FEX describe --abbrev=7) -DOVERRIDE_HASH=$(git -C FEX rev-parse --short=7 HEAD)"
+    cmake -S FEX -B fex-wow64 -G Ninja -DMINGW_TRIPLE=aarch64-w64-mingw32 $a
+    ninja -C fex-wow64 wow64fex
+    cmake -S FEX -B fex-ec -G Ninja -DMINGW_TRIPLE=arm64ec-w64-mingw32 $a
+    ninja -C fex-ec arm64ecfex
+}
+
+package() {
+    local d="$pkgdir/usr/share/steam/compatibilitytools.d/$_ge-p3s"
+    install -d "${d%/*}"
+    cp -a "$_ge-aarch64" "$d"
+    sed -i "s/$_ge-aarch64/$_ge-p3s/g" "$d/compatibilitytool.vdf"
+    patch -d "$d" -Np1 -i "$srcdir/proton-0001-FEX-full-x87-for-installers-in-every-game.patch"
+
+    local w="$d/files/lib/wine"
+    install -m 755 wine-build/dlls/ntdll/ntdll.so "$w/aarch64-unix/ntdll.so"
+    install -m 644 wine-build/dlls/ntdll/aarch64-windows/ntdll.dll "$w/aarch64-windows/ntdll.dll"
+    install -m 644 wine-build/dlls/ntdll/i386-windows/ntdll.dll "$w/i386-windows/ntdll.dll"
+    install -m 644 fex-wow64/Bin/libwow64fex.dll fex-ec/Bin/libarm64ecfex.dll "$w/aarch64-windows/"
+
+    install -Dm 644 "$_ge-aarch64/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

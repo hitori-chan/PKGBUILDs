@@ -1,0 +1,35 @@
+--- a/proton
++++ b/proton
+@@ -1881,6 +1881,19 @@
+     "1038250"   :  "P",   # DIRT 5
+ }
+ 
++# Inno Setup copies paths through x87 64-bit integers, which a double rounds
++fex_installer_profile = {
++    "setup*": {
++        "X87ReducedPrecision": "0"
++    },
++    "scriptInterpreter*": {
++        "X87ReducedPrecision": "0"
++    },
++    "unins*": {
++        "X87ReducedPrecision": "0"
++    }
++}
++
+ fex_application_profiles = {
+     "292030" : { # The Witcher 3: Wild Hunt
+         "setup*": {
+@@ -2266,11 +2279,7 @@
+         if "PROTON_LOG" in self.env:
+             app_config["Config"]["SilentLog"] = "0" if self.log_enabled_for("fex", True) else "1"
+ 
+-        if "SteamGameId" in os.environ and os.environ["SteamGameId"] in fex_application_profiles:
+-            try:
+-                app_config["AppOverrides"] = fex_application_profiles[os.environ["SteamGameId"]]
+-            except (KeyError, ValueError):
+-                pass
++        app_config["AppOverrides"] = fex_application_profiles.get(os.environ.get("SteamGameId"), fex_installer_profile)
+ 
+         return app_config
+ 

@@ -1,0 +1,55 @@
+--- a/dlls/ntdll/sync.c
++++ b/dlls/ntdll/sync.c
+@@ -880,7 +880,8 @@
+ {
+     struct futex_queue *queue = get_futex_queue( addr );
+     struct futex_entry entry;
+-    BOOL queued = FALSE;
++    LARGE_INTEGER end;
++    BOOL queued = FALSE, foreign = FALSE;
+     NTSTATUS ret;
+ 
+     TRACE("addr %p cmp %p size %#Ix timeout %s\n", addr, cmp, size, debugstr_timeout( timeout ));
+@@ -907,7 +908,18 @@
+ 
+     spin_unlock( &queue->lock );
+ 
+-    ret = NtWaitForAlertByThreadId( NULL, timeout );
++    /* A waker dequeues its waiter before it alerts it, so an alert to a waiter still queued is not its own. */
++    while ((ret = NtWaitForAlertByThreadId( NULL, timeout )) == STATUS_ALERTED
++           && ReadPointerAcquire( (void * volatile *)&entry.addr ))
++    {
++        foreign = TRUE;
++        if (timeout && timeout->QuadPart < 0)
++        {
++            NtQuerySystemTime( &end );
++            end.QuadPart -= timeout->QuadPart;
++            timeout = &end;
++        }
++    }
+ 
+     /* We may have already been removed by a call to RtlWakeAddressSingle() or RtlWakeAddressAll(). */
+     if (ReadPointerAcquire( (void * volatile *)&entry.addr ))
+@@ -919,8 +931,20 @@
+     }
+ 
+     /* A waker took us off the queue and alerts us after releasing the lock. If our wait timed out first, take
+-     * that alert, or it would end this thread's next wait early. */
+-    if (!queued && ret == STATUS_TIMEOUT) ret = NtWaitForAlertByThreadId( NULL, NULL );
++     * that alert, or it would end this thread's next wait early. Bounded: a waker can be killed on the way. */
++    if (!queued && ret == STATUS_TIMEOUT)
++    {
++        LARGE_INTEGER alert_timeout = {.QuadPart = -1000000};
++
++        NtWaitForAlertByThreadId( NULL, &alert_timeout );
++        ret = STATUS_ALERTED;
++    }
++
++#ifdef _WIN64
++    /* A WoW64 thread's host side runs between its guest's queueing and the guest's wait: an emulator's locks. The
++     * alert a wait here took may be the guest's, and a lost one leaves the guest asleep. Hand it on. */
++    if (foreign && NtCurrentTeb()->WowTebOffset) NtAlertThreadByThreadId( (HANDLE)(DWORD_PTR)entry.tid );
++#endif
+ 
+     TRACE("returning %#lx\n", ret);
+ 
