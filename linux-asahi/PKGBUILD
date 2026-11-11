@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=95d4e3cab40bd036fbb9708cc3a3e543334939c6
+_commit=d833e0cfa0bc7caca79cea72301591edf97e718e
 _kver=7.3.3
-_rev=206
+_rev=207
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -32,7 +32,7 @@ source=(
 )
 sha256sums=('SKIP'
             '653ac121b5a3a34356f10cc0c4aa3286f4e9be4a5927a5267efec0f3f38c1f41'
-            'e34c2fd6efcfd5cb6b615594be7d54ddf8d9130eff1846541ac49eadf5cf3c3f'
+            'b443d6475ebeba440483c388e7298e33222d702a33117d09a26ddd1325a77ded'
             'e2318fa3ec58ba2d364fb9ba90af1488d4e4d7a3180d240ab096da595a73d555'
             '41d1966ef00e06cb41bb0b29b864d2b626ff68c9ac9e631b18e9ac734227ac72'
             '4d8a8f8b3b96f4d0c75892d5e6060c6b11cbcedf20702e74b8591e80b3fa94b7'
