@@ -2,9 +2,9 @@
 # Contributor: Nikolay Rysev <mad.f3ka@gmail.com>
 
 pkgname=fprintd
-_commit=f4126e5431e9392b1e5552f9557494c0810f231b
+_commit=1905007d1cd5f9532987bb3e92010e6bfc5ccc36
 _srcname=fprintd-$_commit
-pkgver=1.94.5.r6.g${_commit::8}
+pkgver=1.94.5.r8.g${_commit::8}
 pkgrel=1
 pkgdesc="D-Bus service to access fingerprint readers"
 url="https://github.com/hitori-chan/fprintd"
@@ -33,7 +33,7 @@ makedepends=(
 )
 groups=(fprint)
 source=("$_srcname.tar.gz::https://github.com/hitori-chan/fprintd/archive/$_commit.tar.gz")
-sha256sums=('ccd50ea97cffeeeef7d199e2a89dd2974e5af6dc200aab8c387e9f8024b49c96')
+sha256sums=('38f509620e6c4ced4e0092b4806003521cbc4491f3dc31dab2a106a945edb6fb')
 
 build() {
   local meson_options=(
