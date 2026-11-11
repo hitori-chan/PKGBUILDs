@@ -1,0 +1,72 @@
+diff --git a/Source/Tools/FEXInterpreter/FEXInterpreter.cpp b/Source/Tools/FEXInterpreter/FEXInterpreter.cpp
+index 2881ad9..a54d610 100644
+--- a/Source/Tools/FEXInterpreter/FEXInterpreter.cpp
++++ b/Source/Tools/FEXInterpreter/FEXInterpreter.cpp
+@@ -56,6 +56,7 @@ $end_info$
+ #include <queue>
+ #include <set>
+ #include <sys/auxv.h>
++#include <sys/personality.h>
+ #include <sys/prctl.h>
+ #include <sys/resource.h>
+ #include <sys/select.h>
+@@ -327,6 +328,50 @@ namespace GCS {
+   }
+ } // namespace GCS
+ 
++namespace P3S {
++  // A kernel with per-process page sizes (arm64's CONFIG_ARM64_PER_PROCESS_PAGE_SIZE) gives a process 4K pages when
++  // its personality has ADDR_PAGE_SIZE_4KB at execve, which fixes the page size of the new address space. x86 code
++  // expects 4K pages, so a FEX started at a larger page size sets the flag and executes the program again. Its
++  // children inherit the flag. On a kernel without the feature the flag does nothing: the second start sees it set
++  // and goes on, at the cost of one execve. FEX_P3S=0 turns this off.
++  constexpr unsigned int ADDR_PAGE_SIZE_4KB = 0x40000000;
++
++  void ExecAt4KPages(char** argv, char** const envp) {
++    if (sysconf(_SC_PAGESIZE) == 4096) {
++      return;
++    }
++    const char* Opt = getenv("FEX_P3S");
++    if (Opt && strcmp(Opt, "0") == 0) {
++      return;
++    }
++    const int Personality = personality(0xffffffff);
++    if (Personality == -1 || (Personality & ADDR_PAGE_SIZE_4KB)) {
++      return;
++    }
++    if (getenv("FEX_EXECVEFD")) {
++      // Started by FEX's own execve emulation, whose descriptor the program is: left as it is.
++      return;
++    }
++    if (personality(Personality | ADDR_PAGE_SIZE_4KB) == -1) {
++      return;
++    }
++
++    const int ExecFD = getauxval(AT_EXECFD);
++    if (ExecFD != 0 && argv[0] && argv[1]) {
++      // binfmt_misc ('P' and 'O' flags): argv is { FEX, the program's path, its own argv }. The kernel's binfmt
++      // handler starts FEX again for the path, with a descriptor of its own: this one is closed by the execve.
++      fcntl(ExecFD, F_SETFD, FD_CLOEXEC);
++      execve(argv[1], argv + 2, envp);
++      fcntl(ExecFD, F_SETFD, 0);
++    } else if (ExecFD == 0) {
++      // Started directly (FEXInterpreter PROGRAM ARGS, FEXBash): the same arguments.
++      execve("/proc/self/exe", argv, envp);
++    }
++    // No execve: go on at the larger page size.
++    personality(Personality);
++  }
++} // namespace P3S
++
+ namespace UnalignedAtomic {
+   void SetupKernelUnalignedAtomics() {
+ #ifndef PR_ARM64_SET_UNALIGN_ATOMIC
+@@ -384,6 +429,8 @@ static int StealFEXFDFromEnv(const char* Env) {
+ }
+ 
+ int main(int argc, char** argv, char** const envp) {
++  FEX::Kernel::P3S::ExecAt4KPages(argv, envp);
++
+   auto SBRKPointer = FEX::SBRKAllocations::DisableSBRKAllocations();
+   FEXCore::Allocator::GLIBCScopedFault GLIBFaultScope;
+ 

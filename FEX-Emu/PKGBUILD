@@ -5,7 +5,7 @@ pkgbase=FEX-Emu
 pkgname=FEX-Emu
 _fex=02e24ca5c01ed0c864466ed573db347336f70170
 pkgver=2604.1
-pkgrel=2
+pkgrel=3
 pkgdesc="Fast x86 emulation frontend"
 arch=(aarch64)
 url="https://github.com/FEX-Emu/FEX"
@@ -43,7 +43,7 @@ depends=(
 )
 source=("git+https://github.com/FEX-Emu/FEX.git#commit=${_fex}"
         "cmake.patch"
-        "16k.patch"
+        "p3s.patch"
         "Config.json"
         "fex-rootfs.hook"
         "fex-rootfs.service"
@@ -63,7 +63,7 @@ prepare() {
   git submodule update --init --recursive
 
   patch -p1 < ../../cmake.patch
-  patch -p1 < ../../16k.patch
+  patch -p1 < ../../p3s.patch
   sed -i 's/^#define LG_PAGE .*/#define LG_PAGE 14/; s/^#define LG_HUGEPAGE .*/#define LG_HUGEPAGE 25/' \
     External/jemalloc_glibc/pregen/include/jemalloc/internal/jemalloc_internal_defs.h
   # For cherry-picking we need a git user with name and e-mail as committer
