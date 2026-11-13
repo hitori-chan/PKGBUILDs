@@ -19,3 +19,7 @@ CONFIG_TRUSTED_KEYS_APPLE_SEP=y
 # CONFIG_ARM64_VA_BITS_48 is not set
 CONFIG_ARM64_VA_BITS_47=y
 CONFIG_ARM64_PER_PROCESS_PAGE_SIZE=y
+# sched_ext, for scx schedulers' A/B (TODO's scx_lavd); idle without one loaded
+CONFIG_SCHED_CLASS_EXT=y
+# named anonymous mappings (PR_SET_VMA_ANON_NAME): FEX names its allocator's with it, as Arch's kernel allows
+CONFIG_ANON_VMA_NAME=y
