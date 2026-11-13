@@ -2,12 +2,12 @@
 
 _ge=GE-Proton11-12
 _wine=fda79a585939fb7512dc220a11249f9ffe825fcf
-_fex=02e24ca5c01ed0c864466ed573db347336f70170
+_fex=4f9c1f1e36443d22d7655477e34f51b95b685bf1
 _staging=6cc805ea57132eeaf44764e9213823c9b8d0d300
 _mingw=llvm-mingw-20261020-ucrt-ubuntu-22.04-aarch64
 pkgname=proton-ge-custom
 pkgver=11.12
-pkgrel=2
+pkgrel=3
 pkgdesc='GE-Proton on a 16K kernel with per-process page sizes (P3S): its aarch64 release, Wine as a 4K process, our fixes'
 arch=('aarch64')
 url='https://github.com/GloriousEggroll/proton-ge-custom'
@@ -70,6 +70,11 @@ build() {
         make dlls/ntdll/all
     )
 
+    # FEX's Unix side from the same commit as its DLLs: they share one call table, and the release's .so files
+    # predate the calls a newer FEX adds (2611's CheckSupportsTPIDRRO_CPU), which then land past its end
+    cmake -S FEX/Source/Windows/UnixLib -B fex-unix -G Ninja -DCMAKE_BUILD_TYPE=Release
+    ninja -C fex-unix
+
     export PATH="$srcdir/$_mingw/bin:$PATH"
     local a="-DCMAKE_BUILD_TYPE=Release -DENABLE_FEXCORE_PROFILER=True -DENABLE_LTO=False -DBUILD_TESTING=False"
     a+=" -DENABLE_JEMALLOC_GLIBC_ALLOC=False -DTUNE_CPU=none -DTUNE_ARCH=armv8.5-a -DCMAKE_TOOLCHAIN_FILE=$srcdir/FEX/Data/CMake/toolchain_mingw.cmake"
@@ -92,6 +97,7 @@ package() {
     install -m 644 wine-build/dlls/ntdll/aarch64-windows/ntdll.dll "$w/aarch64-windows/ntdll.dll"
     install -m 644 wine-build/dlls/ntdll/i386-windows/ntdll.dll "$w/i386-windows/ntdll.dll"
     install -m 644 fex-wow64/Bin/libwow64fex.dll fex-ec/Bin/libarm64ecfex.dll "$w/aarch64-windows/"
+    install -m 755 fex-unix/libwow64fex.so fex-unix/libarm64ecfex.so "$w/aarch64-unix/"
 
     install -Dm 644 "$_ge-aarch64/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname/"
 }
