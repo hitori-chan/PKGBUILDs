@@ -3,9 +3,9 @@
 
 pkgbase=FEX-Emu
 pkgname=FEX-Emu
-_fex=02e24ca5c01ed0c864466ed573db347336f70170
-pkgver=2604.1
-pkgrel=3
+_fex=4f9c1f1e36443d22d7655477e34f51b95b685bf1
+pkgver=2611.1
+pkgrel=1
 pkgdesc="Fast x86 emulation frontend"
 arch=(aarch64)
 url="https://github.com/FEX-Emu/FEX"
@@ -49,7 +49,7 @@ source=("git+https://github.com/FEX-Emu/FEX.git#commit=${_fex}"
         "fex-rootfs.service"
         "fex-rootfs.sh")
 sha256sums=('SKIP'
-            '3f66fc27d99b463ac2116d321ea626a9f0be5c3ddad544911b6db66545f8ddcc'
+            'db9886ccf21367ca0ad99c1fbdaa1b7d943912dd08dc22316563e0accedf4a6c'
             'SKIP'
             'SKIP'
             'SKIP'
