@@ -1,0 +1,56 @@
+# Maintainer: Caleb Maclennan <caleb@alerque.com>
+# Contributor: Aaron Blasko <blaskoazzolaaaron [at] gmail.com>
+
+pkgname=aquamarine
+_commit=7c1c55b2a76ddb9f6602f8c0886ecf1b899529f9
+pkgver=0.16.0.r8.g${_commit::8}
+pkgrel=1
+pkgdesc='a very light linux rendering backend library'
+arch=(aarch64)
+url="https://github.com/hyprwm/$pkgname"
+license=(BSD-3-Clause)
+depends=(libgcc
+         libstdc++
+         glibc # libc.so libm.so
+         hyprutils libhyprutils.so
+         libdisplay-info libdisplay-info.so
+         libdrm # libdrm.so
+         libglvnd libEGL.so
+         libinput # libinput.so
+         mesa # libgbm.so
+         opengl-driver
+         pixman
+         seatd libseat.so
+         systemd-libs libudev.so
+         wayland libwayland-client.so
+         wayland-protocols)
+makedepends=(cmake
+             hyprwayland-scanner)
+provides=("lib$pkgname.so")
+_archive="$pkgname-$_commit"
+# upstream's main eight commits past 0.16.0 (a GBM performance fix among them), and the primary plane placed with a
+# source and destination rectangle and a YCbCr encoding, so Hyprland scans a video's NV12 or P010 buffer out on the
+# DCP's primary plane
+source=("$_archive.tar.gz::$url/archive/$_commit.tar.gz"
+        0001-output-place-the-primary-buffer-with-a-source-destin.patch)
+sha256sums=('b031e95d8249266549f7e93257e9010c9c4d4674924fafa31b4bfd3eda7930cf'
+            'ecd5fe3ee0bf2e2b9dd9118d11a8adc30494495ac31ec2c93b981387d1b3c019')
+
+prepare() {
+	cd "$_archive"
+	patch -Np1 -i ../0001-output-place-the-primary-buffer-with-a-source-destin.patch
+}
+
+build() {
+	cd "$_archive"
+	cmake -B build \
+		-D CMAKE_INSTALL_PREFIX=/usr \
+		-D CMAKE_BUILD_TYPE=Release
+	cmake --build build
+}
+
+package() {
+	cd "$_archive"
+	DESTDIR="$pkgdir" cmake --install build
+	install -Dm0644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE
+}

@@ -1,0 +1,414 @@
+From 392b307778f7c97292d9570733f600e255fb48c7 Mon Sep 17 00:00:00 2001
+From: hitori-chan
+Subject: [PATCH] output: place the primary buffer with a source, destination
+ and YCbCr
+
+COutputState gains a buffer placement: the source rectangle in buffer
+pixels, the destination on the output, and a YCbCr buffer's matrix and
+range. The atomic backend sets SRC_* and CRTC_* from it, and the
+primary plane's COLOR_ENCODING (parsed from the plane) and COLOR_RANGE,
+so the display scales a video buffer instead of the renderer. setBuffer()
+resets the placement; the legacy and Wayland backends refuse all but the
+default one.
+---
+ include/aquamarine/backend/DRM.hpp        | 18 ++++++-
+ include/aquamarine/backend/drm/Atomic.hpp |  2 +-
+ include/aquamarine/output/Output.hpp      | 21 +++++++++
+ src/backend/Wayland.cpp                   |  9 ++++
+ src/backend/drm/DRM.cpp                   |  7 ++-
+ src/backend/drm/Props.cpp                 | 13 ++++++
+ src/backend/drm/Props.hpp                 |  1 +
+ src/backend/drm/impl/Atomic.cpp           | 57 +++++++++++++++++++----
+ src/backend/drm/impl/Legacy.cpp           |  7 +++
+ src/output/Output.cpp                     |  7 ++-
+ 10 files changed, 128 insertions(+), 14 deletions(-)
+
+diff --git a/include/aquamarine/backend/DRM.hpp b/include/aquamarine/backend/DRM.hpp
+index 25e27da..2d0a09b 100644
+--- a/include/aquamarine/backend/DRM.hpp
++++ b/include/aquamarine/backend/DRM.hpp
+@@ -150,8 +150,9 @@ namespace Aquamarine {
+                 uint32_t hotspot_y;
+                 uint32_t in_fence_fd;
+                 uint32_t color_range;
++                uint32_t color_encoding;
+             } values;
+-            uint32_t props[18] = {0};
++            uint32_t props[19] = {0};
+         };
+         UDRMPlaneProps props;
+ 
+@@ -164,6 +165,18 @@ namespace Aquamarine {
+             uint32_t props[2] = {0};
+         };
+         UDRMPlaneColorRange colorRange;
++
++        // only valid when color_encoding != 0, an encoding the plane lacks is NO_ENUM_VALUE
++        static constexpr uint32_t NO_ENUM_VALUE = UINT32_MAX;
++        union UDRMPlaneColorEncoding {
++            struct {
++                uint32_t BT601;
++                uint32_t BT709;
++                uint32_t BT2020;
++            } values;
++            uint32_t props[3] = {NO_ENUM_VALUE, NO_ENUM_VALUE, NO_ENUM_VALUE};
++        };
++        UDRMPlaneColorEncoding colorEncoding;
+     };
+ 
+     struct SDRMCRTC {
+@@ -410,6 +423,9 @@ namespace Aquamarine {
+             uint32_t          crtcID      = 0;
+             bool              propsCached = false;
+             eOutputColorRange colorRange  = AQ_OUTPUT_COLOR_RANGE_AUTO;
++
++            // the primary's placement as last committed, for restating this head
++            COutputState::SBufferPlacement placement;
+         } atomic;
+ 
+         union UDRMConnectorProps {
+diff --git a/include/aquamarine/backend/drm/Atomic.hpp b/include/aquamarine/backend/drm/Atomic.hpp
+index 735f95d..15c8a82 100644
+--- a/include/aquamarine/backend/drm/Atomic.hpp
++++ b/include/aquamarine/backend/drm/Atomic.hpp
+@@ -44,7 +44,7 @@ namespace Aquamarine {
+         bool         addRaw(uint32_t id, uint32_t prop, uint64_t val) noexcept;
+         SAsyncResult submitAsync(int drmFD, uint32_t flags, uint64_t commitID) noexcept;
+         void         planeProps(Hyprutils::Memory::CSharedPointer<SDRMPlane> plane, Hyprutils::Memory::CSharedPointer<CDRMFB> fb, uint32_t crtc, Hyprutils::Math::Vector2D pos,
+-                                eOutputColorRange colorRange = AQ_OUTPUT_COLOR_RANGE_AUTO);
++                                eOutputColorRange colorRange = AQ_OUTPUT_COLOR_RANGE_AUTO, const COutputState::SBufferPlacement& placement = {});
+         void         planePropsPos(Hyprutils::Memory::CSharedPointer<SDRMPlane> plane, Hyprutils::Math::Vector2D pos);
+ 
+         void         rollback(SDRMConnectorCommitData& data);
+diff --git a/include/aquamarine/output/Output.hpp b/include/aquamarine/output/Output.hpp
+index 5ab263a..6db1a30 100644
+--- a/include/aquamarine/output/Output.hpp
++++ b/include/aquamarine/output/Output.hpp
+@@ -46,6 +46,14 @@ namespace Aquamarine {
+         AQ_OUTPUT_COLOR_RANGE_LIMITED,  // force limited (16-235) range
+     };
+ 
++    // the matrix a YCbCr buffer converts to RGB with
++    enum eOutputYCbCrEncoding : uint32_t {
++        AQ_OUTPUT_YCBCR_ENCODING_DEFAULT = 0, // leave the plane's encoding
++        AQ_OUTPUT_YCBCR_ENCODING_BT601,
++        AQ_OUTPUT_YCBCR_ENCODING_BT709,
++        AQ_OUTPUT_YCBCR_ENCODING_BT2020,
++    };
++
+     class IOutput;
+ 
+     class COutputState {
+@@ -70,6 +78,17 @@ namespace Aquamarine {
+             AQ_OUTPUT_STATE_MAX_BPC            = (1 << 16),
+         };
+ 
++        // how the primary plane shows the buffer. Part of the buffer: setBuffer() resets it,
++        // set it after. A backend that cannot place a buffer refuses all but the default.
++        struct SBufferPlacement {
++            Hyprutils::Math::CBox source;                                           // in buffer pixels, empty: the whole buffer
++            Hyprutils::Math::CBox destination;                                      // in output pixels, empty: the whole output
++            eOutputYCbCrEncoding  ycbcrEncoding = AQ_OUTPUT_YCBCR_ENCODING_DEFAULT; // YCbCr buffers' matrix
++            eOutputColorRange     ycbcrRange    = AQ_OUTPUT_COLOR_RANGE_AUTO;       // YCbCr buffers' range, over colorRange
++
++            bool                  operator==(const SBufferPlacement&) const = default;
++        };
++
+         struct SInternalState {
+             uint32_t                                       committed = 0; // enum eOutputStateProperties
+ 
+@@ -91,6 +110,7 @@ namespace Aquamarine {
+             uint16_t                                       contentType    = DRM_MODE_CONTENT_TYPE_GRAPHICS;
+             eOutputColorRange                              colorRange     = AQ_OUTPUT_COLOR_RANGE_AUTO;
+             uint8_t                                        maxBpc         = 0; // max link bits per component. 0 = unset (use the highest the connector allows)
++            SBufferPlacement                               bufferPlacement;
+         };
+ 
+         class CSnapshot {
+@@ -140,6 +160,7 @@ namespace Aquamarine {
+         void                  setContentType(const uint16_t drmContentType);
+         void                  setColorRange(eOutputColorRange range);
+         void                  setMaxBpc(uint8_t maxBpc); 
++        void                  setBufferPlacement(const SBufferPlacement& placement); // after setBuffer(), goes out with that buffer
+ 
+       private:
+         SInternalState           internalState;
+diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
+index 6af7b93..afc01b8 100644
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -645,6 +645,10 @@ bool Aquamarine::CWaylandOutput::destroy() {
+ }
+ 
+ bool Aquamarine::CWaylandOutput::test() {
++    // the host shows the whole buffer over the whole window
++    if (state->state().bufferPlacement != COutputState::SBufferPlacement{})
++        return false;
++
+     return true; // TODO:
+ }
+ 
+@@ -653,6 +657,11 @@ bool Aquamarine::CWaylandOutput::commit() {
+     const auto& STATE     = snapshot.state();
+     Vector2D    pixelSize = {};
+ 
++    if (STATE.bufferPlacement != COutputState::SBufferPlacement{}) {
++        backend->backend->log(AQ_LOG_ERROR, std::format("Output {}: pending state rejected: cannot place a buffer", name));
++        return false;
++    }
++
+     if (STATE.customMode)
+         pixelSize = STATE.customMode->pixelSize;
+     else if (STATE.mode)
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index e2e9b7c..d58a770 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -1657,6 +1657,9 @@ bool Aquamarine::SDRMPlane::init(drmModePlane* plane) {
+     if (props.values.color_range)
+         getDRMPlaneColorRange(backend->gpu->fd, props.values.color_range, &colorRange);
+ 
++    if (props.values.color_encoding)
++        getDRMPlaneColorEncoding(backend->gpu->fd, props.values.color_encoding, &colorEncoding);
++
+     if (!getDRMProp(backend->gpu->fd, id, props.values.type, &type))
+         return false;
+ 
+@@ -2816,8 +2819,10 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+     // so drivers without plane scaling (e.g. virtio-gpu) reject stale-size buffers,
+     // making larger modes unreachable.
+     // If the consumer already reconfigured the swapchain to the new size, attach a fresh buffer from it.
++    // A buffer with its own destination is placed, not sized for the mode.
+     bool acquiredModesetBuffer = false;
+-    if (data.modeset && data.mainFB && swapchain && data.mainFB->buffer->size != MODE->pixelSize && swapchain->currentOptions().size == MODE->pixelSize) {
++    if (data.modeset && data.mainFB && swapchain && STATE.bufferPlacement.destination.empty() && data.mainFB->buffer->size != MODE->pixelSize &&
++        swapchain->currentOptions().size == MODE->pixelSize) {
+         if (auto newBuf = swapchain->next(nullptr); newBuf) {
+             if (auto newFB = CDRMFB::create(newBuf, backend, nullptr); newFB && !newFB->dead) {
+                 data.mainFB           = newFB;
+diff --git a/src/backend/drm/Props.cpp b/src/backend/drm/Props.cpp
+index 4c1e3cf..9aa8ddd 100644
+--- a/src/backend/drm/Props.cpp
++++ b/src/backend/drm/Props.cpp
+@@ -57,6 +57,7 @@ static const struct prop_info crtc_info[] = {
+ 
+ static const struct prop_info plane_info[] = {
+ #define INDEX(name) (offsetof(SDRMPlane::UDRMPlaneProps, values.name) / sizeof(uint32_t))
++    {.name = "COLOR_ENCODING", .index = INDEX(color_encoding)},
+     {.name = "COLOR_RANGE", .index = INDEX(color_range)},
+     {.name = "CRTC_H", .index = INDEX(crtc_h)},
+     {.name = "CRTC_ID", .index = INDEX(crtc_id)},
+@@ -85,6 +86,14 @@ static const struct prop_info colorrange_info[] = {
+ #undef INDEX
+ };
+ 
++static const struct prop_info colorencoding_info[] = {
++#define INDEX(name) (offsetof(SDRMPlane::UDRMPlaneColorEncoding, values.name) / sizeof(uint32_t))
++    {.name = "ITU-R BT.2020 YCbCr", .index = INDEX(BT2020)},
++    {.name = "ITU-R BT.601 YCbCr", .index = INDEX(BT601)},
++    {.name = "ITU-R BT.709 YCbCr", .index = INDEX(BT709)},
++#undef INDEX
++};
++
+ namespace Aquamarine {
+ 
+     static int comparePropInfo(const void* arg1, const void* arg2) {
+@@ -151,6 +160,10 @@ namespace Aquamarine {
+         return scanPropertyEnum(fd, id, out->props, colorrange_info, sizeof(colorrange_info) / sizeof(colorrange_info[0]));
+     }
+ 
++    bool getDRMPlaneColorEncoding(int fd, uint32_t id, SDRMPlane::UDRMPlaneColorEncoding* out) {
++        return scanPropertyEnum(fd, id, out->props, colorencoding_info, sizeof(colorencoding_info) / sizeof(colorencoding_info[0]));
++    }
++
+     bool getDRMProp(int fd, uint32_t obj, uint32_t prop, uint64_t* ret) {
+         drmModeObjectProperties* props = drmModeObjectGetProperties(fd, obj, DRM_MODE_OBJECT_ANY);
+         if (!props)
+diff --git a/src/backend/drm/Props.hpp b/src/backend/drm/Props.hpp
+index 6b5a626..3aabc6d 100644
+--- a/src/backend/drm/Props.hpp
++++ b/src/backend/drm/Props.hpp
+@@ -8,6 +8,7 @@ namespace Aquamarine {
+     bool  getDRMCRTCProps(int fd, uint32_t id, SDRMCRTC::UDRMCRTCProps* out);
+     bool  getDRMPlaneProps(int fd, uint32_t id, SDRMPlane::UDRMPlaneProps* out);
+     bool  getDRMPlaneColorRange(int fd, uint32_t id, SDRMPlane::UDRMPlaneColorRange* out);
++    bool  getDRMPlaneColorEncoding(int fd, uint32_t id, SDRMPlane::UDRMPlaneColorEncoding* out);
+     bool  getDRMProp(int fd, uint32_t obj, uint32_t prop, uint64_t* ret);
+     void* getDRMPropBlob(int fd, uint32_t obj, uint32_t prop, size_t* ret_len);
+     char* getDRMPropEnum(int fd, uint32_t obj, uint32_t prop_id);
+diff --git a/src/backend/drm/impl/Atomic.cpp b/src/backend/drm/impl/Atomic.cpp
+index 4bd5a2b..80d1bea 100644
+--- a/src/backend/drm/impl/Atomic.cpp
++++ b/src/backend/drm/impl/Atomic.cpp
+@@ -1,5 +1,6 @@
+ #include <aquamarine/backend/drm/Atomic.hpp>
+ #include <cerrno>
++#include <cmath>
+ #include <cstdint>
+ #include <cstring>
+ #include <drm_mode.h>
+@@ -85,7 +86,7 @@ bool Aquamarine::CDRMAtomicRequest::restateConnectors(SP<SDRMConnector> self) {
+             // head we are restating rather than ours.
+             const auto saved = conn;
+             conn             = c;
+-            planeProps(c->crtc->primary, c->crtc->primary->front, c->crtc->id, {}, c->atomic.colorRange);
++            planeProps(c->crtc->primary, c->crtc->primary->front, c->crtc->id, {}, c->atomic.colorRange, c->atomic.placement);
+             conn = saved;
+         }
+ 
+@@ -131,7 +132,7 @@ CDRMAtomicRequest::SAsyncResult Aquamarine::CDRMAtomicRequest::submitAsync(int d
+ }
+ 
+ void Aquamarine::CDRMAtomicRequest::planeProps(Hyprutils::Memory::CSharedPointer<SDRMPlane> plane, Hyprutils::Memory::CSharedPointer<CDRMFB> fb, uint32_t crtc,
+-                                               Hyprutils::Math::Vector2D pos, eOutputColorRange colorRange) {
++                                               Hyprutils::Math::Vector2D pos, eOutputColorRange colorRange, const COutputState::SBufferPlacement& placement) {
+ 
+     if (failed)
+         return;
+@@ -151,16 +152,49 @@ void Aquamarine::CDRMAtomicRequest::planeProps(Hyprutils::Memory::CSharedPointer
+                                    plane->props.values.src_y, plane->props.values.src_w, plane->props.values.src_h, plane->props.values.crtc_w, plane->props.values.crtc_h,
+                                    plane->props.values.fb_id, plane->props.values.crtc_id)));
+ 
++    // the whole buffer at pos unless placed
++    const auto SRC = placement.source.empty() ? CBox{{}, fb->buffer->size} : placement.source;
++    const auto DST = placement.destination.empty() ? CBox{pos, fb->buffer->size} : placement.destination;
++
+     // src_ are 16.16 fixed point (lol)
+-    add(plane->id, plane->props.values.src_x, 0);
+-    add(plane->id, plane->props.values.src_y, 0);
+-    add(plane->id, plane->props.values.src_w, ((uint64_t)fb->buffer->size.x) << 16);
+-    add(plane->id, plane->props.values.src_h, ((uint64_t)fb->buffer->size.y) << 16);
+-    add(plane->id, plane->props.values.crtc_w, (uint32_t)fb->buffer->size.x);
+-    add(plane->id, plane->props.values.crtc_h, (uint32_t)fb->buffer->size.y);
++    add(plane->id, plane->props.values.src_x, sc<uint64_t>(std::round(SRC.x * 65536.0)));
++    add(plane->id, plane->props.values.src_y, sc<uint64_t>(std::round(SRC.y * 65536.0)));
++    add(plane->id, plane->props.values.src_w, sc<uint64_t>(std::round(SRC.w * 65536.0)));
++    add(plane->id, plane->props.values.src_h, sc<uint64_t>(std::round(SRC.h * 65536.0)));
++    add(plane->id, plane->props.values.crtc_w, sc<uint32_t>(std::round(DST.w)));
++    add(plane->id, plane->props.values.crtc_h, sc<uint32_t>(std::round(DST.h)));
+     add(plane->id, plane->props.values.fb_id, fb->id);
+     add(plane->id, plane->props.values.crtc_id, crtc);
+ 
++    // a YCbCr buffer's own range wins over the output's
++    if (placement.ycbcrRange != AQ_OUTPUT_COLOR_RANGE_AUTO) {
++        if (!plane->props.values.color_range) {
++            backend->log(AQ_LOG_ERROR, std::format("atomic planeProps: plane {} has no COLOR_RANGE for the buffer's range", plane->id));
++            failed = true;
++            return;
++        }
++
++        colorRange = placement.ycbcrRange;
++    }
++
++    if (placement.ycbcrEncoding != AQ_OUTPUT_YCBCR_ENCODING_DEFAULT) {
++        uint32_t encodingVal = SDRMPlane::NO_ENUM_VALUE;
++        switch (placement.ycbcrEncoding) {
++            case AQ_OUTPUT_YCBCR_ENCODING_BT601: encodingVal = plane->colorEncoding.values.BT601; break;
++            case AQ_OUTPUT_YCBCR_ENCODING_BT709: encodingVal = plane->colorEncoding.values.BT709; break;
++            case AQ_OUTPUT_YCBCR_ENCODING_BT2020: encodingVal = plane->colorEncoding.values.BT2020; break;
++            case AQ_OUTPUT_YCBCR_ENCODING_DEFAULT: break;
++        }
++
++        if (!plane->props.values.color_encoding || encodingVal == SDRMPlane::NO_ENUM_VALUE) {
++            backend->log(AQ_LOG_ERROR, std::format("atomic planeProps: plane {} has no COLOR_ENCODING for the buffer's encoding", plane->id));
++            failed = true;
++            return;
++        }
++
++        add(plane->id, plane->props.values.color_encoding, encodingVal);
++    }
++
+     if (plane->props.values.color_range) {
+         std::optional<uint32_t> rangeVal;
+         switch (colorRange) {
+@@ -176,7 +210,7 @@ void Aquamarine::CDRMAtomicRequest::planeProps(Hyprutils::Memory::CSharedPointer
+             add(plane->id, plane->props.values.color_range, *rangeVal);
+     }
+ 
+-    planePropsPos(plane, pos);
++    planePropsPos(plane, DST.pos());
+ }
+ 
+ void Aquamarine::CDRMAtomicRequest::planePropsPos(Hyprutils::Memory::CSharedPointer<SDRMPlane> plane, Hyprutils::Math::Vector2D pos) {
+@@ -287,7 +321,7 @@ void Aquamarine::CDRMAtomicRequest::addConnector(Hyprutils::Memory::CSharedPoint
+         if (connector->crtc->props.values.vrr_enabled)
+             add(connector->crtc->id, connector->crtc->props.values.vrr_enabled, (uint64_t)STATE.adaptiveSync);
+ 
+-        planeProps(connector->crtc->primary, data.mainFB, connector->crtc->id, {}, STATE.colorRange);
++        planeProps(connector->crtc->primary, data.mainFB, connector->crtc->id, {}, STATE.colorRange, STATE.bufferPlacement);
+ 
+         if (connector->output->supportsExplicit && (data.committed & COutputState::AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE) && STATE.explicitInFence >= 0)
+             add(connector->crtc->primary->id, connector->crtc->primary->props.values.in_fence_fd, STATE.explicitInFence);
+@@ -462,6 +496,7 @@ void Aquamarine::CDRMAtomicImpl::finalizeAsync(CDRMAtomicRequest& request, SP<SD
+     connector->atomic.crtcID      = data.atomic.crtcID;
+     connector->atomic.propsCached = true;
+     connector->atomic.colorRange  = data.outputState.colorRange;
++    connector->atomic.placement   = data.outputState.bufferPlacement;
+     connector->atomic.vrrEnabled  = data.outputState.adaptiveSync;
+     connector->output->vrrActive  = data.outputState.adaptiveSync;
+     if (data.atomic.ctmd)
+@@ -646,6 +681,7 @@ bool Aquamarine::CDRMAtomicImpl::commit(Hyprutils::Memory::CSharedPointer<SDRMCo
+                 connector->atomic.crtcID      = data.atomic.crtcID;
+                 connector->atomic.propsCached = true;
+                 connector->atomic.colorRange  = data.outputState.colorRange;
++                connector->atomic.placement   = data.outputState.bufferPlacement;
+                 if (data.atomic.ctmd)
+                     connector->crtc->atomic.ctmStateKnown = true;
+ 
+@@ -695,6 +731,7 @@ bool Aquamarine::CDRMAtomicImpl::commit(Hyprutils::Memory::CSharedPointer<SDRMCo
+             connector->atomic.crtcID      = data.atomic.crtcID;
+             connector->atomic.propsCached = true;
+             connector->atomic.colorRange  = data.outputState.colorRange;
++            connector->atomic.placement   = data.outputState.bufferPlacement;
+             if (data.atomic.ctmd)
+                 connector->crtc->atomic.ctmStateKnown = true;
+         }
+diff --git a/src/backend/drm/impl/Legacy.cpp b/src/backend/drm/impl/Legacy.cpp
+index 5c30486..1d9305d 100644
+--- a/src/backend/drm/impl/Legacy.cpp
++++ b/src/backend/drm/impl/Legacy.cpp
+@@ -4,6 +4,7 @@
+ #include <xf86drm.h>
+ #include <xf86drmMode.h>
+ #include <sys/mman.h>
++#include "Shared.hpp"
+ 
+ using namespace Aquamarine;
+ using namespace Hyprutils::Memory;
+@@ -144,6 +145,12 @@ bool Aquamarine::CDRMLegacyImpl::commitInternal(Hyprutils::Memory::CSharedPointe
+ }
+ 
+ bool Aquamarine::CDRMLegacyImpl::testInternal(Hyprutils::Memory::CSharedPointer<SDRMConnector> connector, SDRMConnectorCommitData& data) {
++    // SetCrtc and PageFlip show the whole buffer at 0, 0 with the plane's YCbCr defaults
++    if (data.outputState.bufferPlacement != COutputState::SBufferPlacement{}) {
++        TRACE(connector->backend->backend->log(AQ_LOG_TRACE, "legacy drm: cannot place a buffer"));
++        return false;
++    }
++
+     return true; // TODO: lol
+ }
+ 
+diff --git a/src/output/Output.cpp b/src/output/Output.cpp
+index 649f27d..9813ec2 100644
+--- a/src/output/Output.cpp
++++ b/src/output/Output.cpp
+@@ -208,10 +208,15 @@ void Aquamarine::COutputState::setFormat(uint32_t drmFormat) {
+ }
+ 
+ void Aquamarine::COutputState::setBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer) {
+-    internalState.buffer = buffer;
++    internalState.buffer          = buffer;
++    internalState.bufferPlacement = {};
+     markCommitted(AQ_OUTPUT_STATE_BUFFER);
+ }
+ 
++void Aquamarine::COutputState::setBufferPlacement(const SBufferPlacement& placement) {
++    internalState.bufferPlacement = placement;
++}
++
+ void Aquamarine::COutputState::setExplicitInFence(int32_t fenceFD) {
+     internalState.explicitInFence = fenceFD;
+     markCommitted(AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE);
+-- 
+2.56.1
+
