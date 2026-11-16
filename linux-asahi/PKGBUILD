@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=be8afeb6fd46c261ac42352306bd0b9bf81d346c
+_commit=e2a683a2d5424c2de8a85e272ee51cc554d093b2
 _kver=7.3.3
-_rev=216
+_rev=217
 pkgrel=1
 
 _m1n1_version=1.9.9
@@ -119,7 +119,7 @@ _package() {
 
 _package-headers() {
   pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
-  depends=(pahole)
+  depends=(pahole clang lld llvm)
 
   KARCH=arm64
 
@@ -131,6 +131,9 @@ _package-headers() {
   install -Dt "$builddir" -m644 $O/.config Makefile $O/Module.symvers $O/System.map \
     localversion.* $O/version $O/vmlinux
   install -Dt "$builddir/kernel" -m644 kernel/Makefile
+  # built with LLVM=1: a module built against these headers (DKMS) uses clang too unless LLVM= is given; gcc stops
+  # on clang's flags (-fms-anonymous-structs)
+  sed -i '1i # linux-asahi is built with LLVM=1\nLLVM ?= 1\nexport LLVM' "$builddir/Makefile"
   cp -t "$builddir" -a scripts $O/scripts
 
   # required when STACK_VALIDATION is enabled

@@ -23,3 +23,5 @@ CONFIG_ARM64_PER_PROCESS_PAGE_SIZE=y
 CONFIG_SCHED_CLASS_EXT=y
 # named anonymous mappings (PR_SET_VMA_ANON_NAME): FEX names its allocator's with it, as Arch's kernel allows
 CONFIG_ANON_VMA_NAME=y
+# the trackpad's actuator as FF_HAPTIC on its evdev (linux#573's hid-apple-actuator; magicmouse reaches it as a module)
+CONFIG_HID_APPLE_ACTUATOR=m
