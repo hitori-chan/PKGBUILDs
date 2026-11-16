@@ -1,0 +1,430 @@
+From 0c6927adc646100ef90e3c2fa2c3d0e827311657 Mon Sep 17 00:00:00 2001
+From: hitori-chan
+Subject: [PATCH] output: an overlay plane above the primary
+
+COutputState::setOverlayBuffer() puts a whole-output buffer at 1:1 on
+the CRTC's first overlay plane that takes ARGB8888, above the primary
+(null turns it off); IOutput::hasOverlayPlane() and getOverlayFormats()
+say whether there is one. The overlay goes into the atomic request only
+when its buffer is committed or at a modeset: left out, the kernel and
+DCP keep it as it is, so a buffer placed on the primary under it flips
+alone. Its FB is pinned and presented as the cursor's, restated with
+the primary's, released with the connector's, and refused by the legacy
+and Wayland backends and through the multi-GPU blit.
+
+On appledrm (an M3 Max, r217) the layout this drives, NV12 placed on
+the primary under a full-screen AR24 overlay, takes TEST_ONLY and the
+commit, 21,600 primary-only flips at 30 Hz kept the overlay with none
+failed, and it drew +0.04 to +0.06 W over the primary alone.
+---
+ include/aquamarine/backend/DRM.hpp        |  9 ++-
+ include/aquamarine/backend/drm/Atomic.hpp |  1 +
+ include/aquamarine/output/Output.hpp      | 12 +++-
+ src/backend/Wayland.cpp                   |  6 +-
+ src/backend/drm/DRM.cpp                   | 77 ++++++++++++++++++++++-
+ src/backend/drm/impl/Atomic.cpp           | 24 +++++++
+ src/backend/drm/impl/Legacy.cpp           |  5 ++
+ src/output/Output.cpp                     | 16 ++++-
+ 8 files changed, 138 insertions(+), 12 deletions(-)
+
+diff --git a/include/aquamarine/backend/DRM.hpp b/include/aquamarine/backend/DRM.hpp
+index 2d0a09b..c8b2ab3 100644
+--- a/include/aquamarine/backend/DRM.hpp
++++ b/include/aquamarine/backend/DRM.hpp
+@@ -219,6 +219,7 @@ namespace Aquamarine {
+ 
+         Hyprutils::Memory::CSharedPointer<SDRMPlane> primary;
+         Hyprutils::Memory::CSharedPointer<SDRMPlane> cursor;
++        Hyprutils::Memory::CSharedPointer<SDRMPlane> overlay; // the lowest overlay above the primary that takes ARGB8888
+         Hyprutils::Memory::CWeakPointer<CDRMBackend> backend;
+         Hyprutils::Memory::CSharedPointer<CDRMFB>    pendingCursor;
+ 
+@@ -254,6 +255,8 @@ namespace Aquamarine {
+         virtual void                                                      scheduleFrame(const scheduleFrameReason reason = AQ_SCHEDULE_UNKNOWN);
+         virtual void                                                      setCursorVisible(bool visible);
+         virtual bool                                                      hasCursorPlane() const;
++        virtual bool                                                      hasOverlayPlane() const;
++        virtual std::vector<SDRMFormat>                                   getOverlayFormats();
+         virtual Hyprutils::Math::Vector2D                                 cursorPlaneSize();
+         virtual std::optional<std::chrono::steady_clock::time_point>      nextVBlank() const;
+         virtual size_t                                                    getGammaSize();
+@@ -304,7 +307,7 @@ namespace Aquamarine {
+     };
+ 
+     struct SDRMConnectorCommitData {
+-        Hyprutils::Memory::CSharedPointer<CDRMFB> mainFB, cursorFB;
++        Hyprutils::Memory::CSharedPointer<CDRMFB> mainFB, cursorFB, overlayFB;
+         COutputState::SInternalState              outputState;
+         Hyprutils::Math::Vector2D                 cursorPos, cursorHotspot;
+         bool                                      cursorVisible    = false;
+@@ -314,7 +317,7 @@ namespace Aquamarine {
+         bool                                      test             = false;
+         bool                                      enabled          = false;
+         uint32_t                                  committed        = 0;
+-        bool                                      primaryFBChanged = false, cursorFBChanged = false;
++        bool                                      primaryFBChanged = false, cursorFBChanged = false, overlayFBChanged = false;
+         DRMFBList                                 retiredFBs;
+         Hyprutils::Math::CRegion                  damage;
+         drmModeModeInfo                           modeInfo;
+@@ -373,7 +376,7 @@ namespace Aquamarine {
+         IOutput::SParsedEDID                           parseEDID(std::vector<uint8_t> data);
+         bool                                           commitState(SDRMConnectorCommitData& data);
+         void                                           applyCommit(SDRMConnectorCommitData& data);
+-        void                                           onPresent(bool primary = true, bool cursor = true, DRMFBList* retired = nullptr);
++        void                                           onPresent(bool primary = true, bool cursor = true, DRMFBList* retired = nullptr, bool overlay = true);
+         void                                           recheckCRTCProps();
+         void                                           parseTileInfo();
+         void                                           releaseFBBuffer(const Hyprutils::Memory::CSharedPointer<CDRMFB> fb);
+diff --git a/include/aquamarine/backend/drm/Atomic.hpp b/include/aquamarine/backend/drm/Atomic.hpp
+index 15c8a82..09a56b6 100644
+--- a/include/aquamarine/backend/drm/Atomic.hpp
++++ b/include/aquamarine/backend/drm/Atomic.hpp
+@@ -39,6 +39,7 @@ namespace Aquamarine {
+         bool         restateConnectors(Hyprutils::Memory::CSharedPointer<SDRMConnector> self);
+         void         addConnectorModeset(Hyprutils::Memory::CSharedPointer<SDRMConnector> connector, SDRMConnectorCommitData& data);
+         void         addConnectorCursor(Hyprutils::Memory::CSharedPointer<SDRMConnector> connector, SDRMConnectorCommitData& data);
++        void         addConnectorOverlay(Hyprutils::Memory::CSharedPointer<SDRMConnector> connector, SDRMConnectorCommitData& data);
+         bool         commit(uint32_t flagssss);
+         void         add(uint32_t id, uint32_t prop, uint64_t val);
+         bool         addRaw(uint32_t id, uint32_t prop, uint64_t val) noexcept;
+diff --git a/include/aquamarine/output/Output.hpp b/include/aquamarine/output/Output.hpp
+index 6db1a30..f1bd46e 100644
+--- a/include/aquamarine/output/Output.hpp
++++ b/include/aquamarine/output/Output.hpp
+@@ -76,6 +76,7 @@ namespace Aquamarine {
+             AQ_OUTPUT_STATE_CURSOR_SHAPE       = (1 << 14),
+             AQ_OUTPUT_STATE_CURSOR_POS         = (1 << 15),
+             AQ_OUTPUT_STATE_MAX_BPC            = (1 << 16),
++            AQ_OUTPUT_STATE_OVERLAY_BUFFER     = (1 << 17),
+         };
+ 
+         // how the primary plane shows the buffer. Part of the buffer: setBuffer() resets it,
+@@ -111,6 +112,8 @@ namespace Aquamarine {
+             eOutputColorRange                              colorRange     = AQ_OUTPUT_COLOR_RANGE_AUTO;
+             uint8_t                                        maxBpc         = 0; // max link bits per component. 0 = unset (use the highest the connector allows)
+             SBufferPlacement                               bufferPlacement;
++            Hyprutils::Memory::CSharedPointer<IBuffer>     overlayBuffer; // whole output at 1:1 on the overlay plane; null: the overlay off
++            int32_t                                        overlayInFence = -1;
+         };
+ 
+         class CSnapshot {
+@@ -122,11 +125,11 @@ namespace Aquamarine {
+             int                   error() const;
+ 
+           private:
+-            CSnapshot(const COutputState* owner, const SInternalState& state, const std::array<uint64_t, 17>& generations);
++            CSnapshot(const COutputState* owner, const SInternalState& state, const std::array<uint64_t, 18>& generations);
+ 
+             const COutputState*            m_owner = nullptr;
+             SInternalState                 m_state;
+-            std::array<uint64_t, 17>       m_generations = {};
++            std::array<uint64_t, 18>       m_generations = {};
+             Hyprutils::OS::CFileDescriptor m_explicitInFence;
+             int                            m_error = 0;
+ 
+@@ -161,10 +164,11 @@ namespace Aquamarine {
+         void                  setColorRange(eOutputColorRange range);
+         void                  setMaxBpc(uint8_t maxBpc); 
+         void                  setBufferPlacement(const SBufferPlacement& placement); // after setBuffer(), goes out with that buffer
++        void                  setOverlayBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer, int32_t inFence = -1); // above the primary; null: off. A commit without it leaves the overlay as it is
+ 
+       private:
+         SInternalState           internalState;
+-        std::array<uint64_t, 17> propertyGenerations = {};
++        std::array<uint64_t, 18> propertyGenerations = {};
+         uint64_t                 nextGeneration      = 0;
+ 
+         void                     markCommitted(uint32_t properties);
+@@ -268,6 +272,8 @@ namespace Aquamarine {
+         virtual void                                                      moveCursor(const Hyprutils::Math::Vector2D& coord, bool skipSchedule = false); // includes the hotspot
+         virtual void                                                      setCursorVisible(bool visible); // moving the cursor will make it visible again without this util
+         virtual bool                                                      hasCursorPlane() const;
++        virtual bool                                                      hasOverlayPlane() const; // a plane above the primary that takes a whole-output buffer
++        virtual std::vector<SDRMFormat>                                   getOverlayFormats();
+         virtual Hyprutils::Math::Vector2D                                 cursorPlaneSize(); // -1, -1 means no set size, 0, 0 means error
+         virtual std::optional<std::chrono::steady_clock::time_point>      nextVBlank() const;
+         virtual void                                                      scheduleFrame(const scheduleFrameReason reason = AQ_SCHEDULE_UNKNOWN);
+diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
+index afc01b8..976efa5 100644
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -646,7 +646,7 @@ bool Aquamarine::CWaylandOutput::destroy() {
+ 
+ bool Aquamarine::CWaylandOutput::test() {
+     // the host shows the whole buffer over the whole window
+-    if (state->state().bufferPlacement != COutputState::SBufferPlacement{})
++    if (state->state().bufferPlacement != COutputState::SBufferPlacement{} || state->state().overlayBuffer)
+         return false;
+ 
+     return true; // TODO:
+@@ -657,8 +657,8 @@ bool Aquamarine::CWaylandOutput::commit() {
+     const auto& STATE     = snapshot.state();
+     Vector2D    pixelSize = {};
+ 
+-    if (STATE.bufferPlacement != COutputState::SBufferPlacement{}) {
+-        backend->backend->log(AQ_LOG_ERROR, std::format("Output {}: pending state rejected: cannot place a buffer", name));
++    if (STATE.bufferPlacement != COutputState::SBufferPlacement{} || STATE.overlayBuffer) {
++        backend->backend->log(AQ_LOG_ERROR, std::format("Output {}: pending state rejected: cannot place a buffer or an overlay", name));
+         return false;
+     }
+ 
+diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
+index d58a770..2176835 100644
+--- a/src/backend/drm/DRM.cpp
++++ b/src/backend/drm/DRM.cpp
+@@ -692,6 +692,9 @@ void Aquamarine::CDRMBackend::restoreAfterVT() {
+         if (data.cursorFB && (data.cursorFB->dead || data.cursorFB->buffer->dmabuf().modifier == DRM_FORMAT_MOD_INVALID))
+             data.cursorFB = nullptr;
+ 
++        if (c->crtc->overlay && c->crtc->overlay->front && !c->crtc->overlay->front->dead)
++            data.overlayFB = c->crtc->overlay->front;
++
+         backend->log(AQ_LOG_DEBUG,
+                      std::format("drm: Restoring crtc {} with clock {} hdisplay {} vdisplay {} vrefresh {}", c->crtc->id, data.modeInfo.clock, data.modeInfo.hdisplay,
+                                  data.modeInfo.vdisplay, data.modeInfo.vrefresh));
+@@ -1723,6 +1726,14 @@ bool Aquamarine::SDRMPlane::init(drmModePlane* plane) {
+             CRTC->cursor = self.lock();
+             break;
+         }
++
++        // the first overlay that takes ARGB8888 (planes come in id order, the lowest first): Hyprland's composite
++        // above a buffer the primary scans out (an underlay)
++        if (type == DRM_PLANE_TYPE_OVERLAY && !CRTC->overlay &&
++            std::ranges::any_of(formats, [](const auto& f) { return f.drmFormat == DRM_FORMAT_ARGB8888; })) {
++            CRTC->overlay = self.lock();
++            break;
++        }
+     }
+ 
+     return true;
+@@ -1851,6 +1862,7 @@ void Aquamarine::SDRMConnector::releaseFBReferences(DRMFBList* deferred) {
+     if (crtc) {
+         clearPlane(crtc->primary);
+         clearPlane(crtc->cursor);
++        clearPlane(crtc->overlay);
+         crtc->pendingCursor.reset();
+     }
+ 
+@@ -2180,7 +2192,7 @@ bool Aquamarine::SDRMConnector::commitState(SDRMConnectorCommitData& data) {
+ 
+         applyCommit(data);
+         if (!(data.flags & DRM_MODE_PAGE_FLIP_EVENT))
+-            onPresent(data.primaryFBChanged, data.cursorFBChanged, &data.retiredFBs);
++            onPresent(data.primaryFBChanged, data.cursorFBChanged, &data.retiredFBs, data.overlayFBChanged);
+ 
+         for (const auto& fb : data.retiredFBs)
+             releaseFBBuffer(fb);
+@@ -2242,6 +2254,31 @@ void Aquamarine::SDRMConnector::applyCommit(SDRMConnectorCommitData& data) {
+             crtc->pendingCursor.reset();
+     }
+ 
++    // the overlay as the cursor: pinned from its commit, front once presented; left out of a commit, it keeps its front
++    if (enable && crtc->overlay) {
++        if (data.committed & COutputState::AQ_OUTPUT_STATE_OVERLAY_BUFFER) {
++            const auto& desired = data.overlayFB;
++
++            if (desired == crtc->overlay->front) {
++                if (crtc->overlay->back != crtc->overlay->front)
++                    retireBack(crtc->overlay);
++            } else {
++                if (crtc->overlay->back != crtc->overlay->front && crtc->overlay->back != desired)
++                    data.retiredFBs.emplace_back(std::move(crtc->overlay->back));
++
++                if (crtc->overlay->back != desired) {
++                    crtc->overlay->back = desired;
++                    if (desired)
++                        desired->buffer->backendPin();
++                }
++
++                crtc->overlay->backSet = true;
++                data.overlayFBChanged  = true;
++            }
++        } else if (data.modeset && data.overlayFB == crtc->overlay->front && crtc->overlay->back != crtc->overlay->front)
++            retireBack(crtc->overlay);
++    }
++
+     if (data.committed & COutputState::AQ_OUTPUT_STATE_MODE)
+         refresh = calculateRefresh(data.modeInfo);
+ 
+@@ -2308,7 +2345,7 @@ void Aquamarine::SDRMConnector::setCRTC(SP<SDRMCRTC> newCRTC) {
+     crtc = newCRTC;
+ }
+ 
+-void Aquamarine::SDRMConnector::onPresent(bool primary, bool cursor, DRMFBList* deferred) {
++void Aquamarine::SDRMConnector::onPresent(bool primary, bool cursor, DRMFBList* deferred, bool overlay) {
+     DRMFBList  retired;
+     const auto presentPlane = [&retired](const SP<SDRMPlane>& plane) {
+         if (!plane || !plane->backSet)
+@@ -2325,6 +2362,8 @@ void Aquamarine::SDRMConnector::onPresent(bool primary, bool cursor, DRMFBList*
+         presentPlane(crtc->primary);
+     if (cursor)
+         presentPlane(crtc->cursor);
++    if (overlay)
++        presentPlane(crtc->overlay);
+ 
+     if (deferred) {
+         for (auto& fb : retired)
+@@ -2490,6 +2529,10 @@ bool Aquamarine::CDRMOutput::prepareAsyncCommitData(const COutputState::CSnapsho
+     if (data.cursorFB && (data.cursorFB->dead || data.cursorFB->buffer->dmabuf().modifier == DRM_FORMAT_MOD_INVALID))
+         data.cursorFB.reset();
+ 
++    // an async commit never carries the overlay (not in ASYNC_PROPERTIES): it keeps what it holds
++    if (connector->crtc->overlay && connector->crtc->overlay->front && !connector->crtc->overlay->front->dead)
++        data.overlayFB = connector->crtc->overlay->front;
++
+     const auto MODE = STATE.mode ? STATE.mode : STATE.customMode;
+     if (!MODE)
+         return false;
+@@ -2798,6 +2841,26 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+         }
+     }
+ 
++    // the overlay: the committed buffer (null turns it off), else what it holds, which a modeset states again
++    if (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_OVERLAY_BUFFER) {
++        if (STATE.overlayBuffer) {
++            if (!connector->crtc->overlay) {
++                backend->backend->log(AQ_LOG_ERROR, "drm: An overlay buffer, but the CRTC has no overlay plane");
++                return false;
++            }
++            if (backend->shouldBlit()) {
++                backend->backend->log(AQ_LOG_ERROR, "drm: An overlay buffer cannot go through the multi-GPU blit");
++                return false;
++            }
++            data.overlayFB = CDRMFB::create(STATE.overlayBuffer, backend, nullptr);
++            if (!data.overlayFB || data.overlayFB->dead) {
++                backend->backend->log(AQ_LOG_ERROR, "drm: The overlay buffer failed to import to KMS");
++                return false;
++            }
++        }
++    } else if (connector->crtc->overlay && connector->crtc->overlay->front && !connector->crtc->overlay->front->dead)
++        data.overlayFB = connector->crtc->overlay->front;
++
+     if (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_HDR)
+         data.hdrMetadata = STATE.hdrMetadata;
+ 
+@@ -3060,6 +3123,16 @@ Vector2D Aquamarine::CDRMOutput::cursorPlaneSize() {
+     return backend->drmProps.cursorSize;
+ }
+ 
++bool Aquamarine::CDRMOutput::hasOverlayPlane() const {
++    return connector && connector->crtc && connector->crtc->overlay && !backend->shouldBlit();
++}
++
++std::vector<SDRMFormat> Aquamarine::CDRMOutput::getOverlayFormats() {
++    if (!hasOverlayPlane())
++        return {};
++    return connector->crtc->overlay->formats;
++}
++
+ bool Aquamarine::CDRMOutput::hasCursorPlane() const {
+     return connector->status == DRM_MODE_CONNECTED && connector->crtc && connector->crtc->cursor && !connector->crtc->cursor->formats.empty();
+ }
+diff --git a/src/backend/drm/impl/Atomic.cpp b/src/backend/drm/impl/Atomic.cpp
+index 80d1bea..6313551 100644
+--- a/src/backend/drm/impl/Atomic.cpp
++++ b/src/backend/drm/impl/Atomic.cpp
+@@ -87,6 +87,8 @@ bool Aquamarine::CDRMAtomicRequest::restateConnectors(SP<SDRMConnector> self) {
+             const auto saved = conn;
+             conn             = c;
+             planeProps(c->crtc->primary, c->crtc->primary->front, c->crtc->id, {}, c->atomic.colorRange, c->atomic.placement);
++            if (c->crtc->overlay && c->crtc->overlay->front)
++                planeProps(c->crtc->overlay, c->crtc->overlay->front, c->crtc->id, {});
+             conn = saved;
+         }
+ 
+@@ -287,6 +289,7 @@ void Aquamarine::CDRMAtomicRequest::addConnector(Hyprutils::Memory::CSharedPoint
+         addConnectorModeset(connector, data);
+ 
+     addConnectorCursor(connector, data);
++    addConnectorOverlay(connector, data);
+ 
+     if (forceConnProps || connector->atomic.crtcID != newCrtcID)
+         add(connector->id, connector->props.values.crtc_id, newCrtcID);
+@@ -370,6 +373,27 @@ void Aquamarine::CDRMAtomicRequest::addConnectorCursor(Hyprutils::Memory::CShare
+         planeProps(connector->crtc->cursor, nullptr, 0, {});
+ }
+ 
++// The overlay goes in the request only when its buffer is committed, or at a modeset: left out, the kernel keeps it as
++// it is (appledrm swaps the planes in the request alone), so a primary-only flip under it changes nothing above.
++void Aquamarine::CDRMAtomicRequest::addConnectorOverlay(Hyprutils::Memory::CSharedPointer<SDRMConnector> connector, SDRMConnectorCommitData& data) {
++    const auto& OVERLAY = connector->crtc->overlay;
++    if (!OVERLAY)
++        return;
++
++    const bool enable = data.enabled && data.mainFB;
++    if (enable && !(data.committed & COutputState::AQ_OUTPUT_STATE_OVERLAY_BUFFER) && !data.modeset)
++        return;
++
++    if (!enable || !data.overlayFB) {
++        planeProps(OVERLAY, nullptr, 0, {});
++        return;
++    }
++
++    planeProps(OVERLAY, data.overlayFB, connector->crtc->id, {});
++    if (connector->output->supportsExplicit && data.outputState.overlayInFence >= 0 && OVERLAY->props.values.in_fence_fd)
++        add(OVERLAY->id, OVERLAY->props.values.in_fence_fd, data.outputState.overlayInFence);
++}
++
+ bool Aquamarine::CDRMAtomicRequest::commit(uint32_t flagssss) {
+     static auto flagsToStr = [](uint32_t flags) {
+         std::ostringstream result;
+diff --git a/src/backend/drm/impl/Legacy.cpp b/src/backend/drm/impl/Legacy.cpp
+index 1d9305d..f58b10a 100644
+--- a/src/backend/drm/impl/Legacy.cpp
++++ b/src/backend/drm/impl/Legacy.cpp
+@@ -151,6 +151,11 @@ bool Aquamarine::CDRMLegacyImpl::testInternal(Hyprutils::Memory::CSharedPointer<
+         return false;
+     }
+ 
++    if (data.outputState.overlayBuffer) {
++        TRACE(connector->backend->backend->log(AQ_LOG_TRACE, "legacy drm: no overlay plane"));
++        return false;
++    }
++
+     return true; // TODO: lol
+ }
+ 
+diff --git a/src/output/Output.cpp b/src/output/Output.cpp
+index 9813ec2..3eeb4f7 100644
+--- a/src/output/Output.cpp
++++ b/src/output/Output.cpp
+@@ -46,6 +46,14 @@ bool Aquamarine::IOutput::hasCursorPlane() const {
+     return false;
+ }
+ 
++bool Aquamarine::IOutput::hasOverlayPlane() const {
++    return false;
++}
++
++std::vector<Aquamarine::SDRMFormat> Aquamarine::IOutput::getOverlayFormats() {
++    return {};
++}
++
+ void Aquamarine::IOutput::scheduleFrame(const scheduleFrameReason reason) {
+     ;
+ }
+@@ -70,7 +78,7 @@ bool Aquamarine::IOutput::destroy() {
+     return false;
+ }
+ 
+-Aquamarine::COutputState::CSnapshot::CSnapshot(const COutputState* owner, const SInternalState& state, const std::array<uint64_t, 17>& generations) :
++Aquamarine::COutputState::CSnapshot::CSnapshot(const COutputState* owner, const SInternalState& state, const std::array<uint64_t, 18>& generations) :
+     m_owner(owner), m_state(state), m_generations(generations) {
+     if (!(m_state.committed & AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE) || m_state.explicitInFence < 0)
+         return;
+@@ -217,6 +225,12 @@ void Aquamarine::COutputState::setBufferPlacement(const SBufferPlacement& placem
+     internalState.bufferPlacement = placement;
+ }
+ 
++void Aquamarine::COutputState::setOverlayBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer, int32_t inFence) {
++    internalState.overlayBuffer  = buffer;
++    internalState.overlayInFence = buffer ? inFence : -1;
++    markCommitted(AQ_OUTPUT_STATE_OVERLAY_BUFFER);
++}
++
+ void Aquamarine::COutputState::setExplicitInFence(int32_t fenceFD) {
+     internalState.explicitInFence = fenceFD;
+     markCommitted(AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE);
+-- 
+2.56.1
+
