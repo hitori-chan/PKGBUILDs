@@ -1,0 +1,38 @@
+# Maintainer: hitori-chan <hitori1403@gmail.com>
+
+pkgbase=libane
+pkgname=('libane' 'python-ane')
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='The Apple Neural Engine on Linux, over the apple-ane accel driver'
+arch=('aarch64')
+url='https://github.com/hitori-chan/libane'
+license=('LGPL-2.1-or-later')
+makedepends=('linux-api-headers' 'python')
+checkdepends=('python-numpy')
+source=("$pkgbase-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('b71125fdd076c97fd5d87ed39c4156b6d87ea0c561ddb46ee760a1e3cc43e66f')
+
+build() {
+  make -C "$pkgbase-$pkgver" PREFIX=/usr
+}
+
+check() {
+  make -C "$pkgbase-$pkgver" PREFIX=/usr check
+}
+
+package_libane() {
+  pkgdesc='The Apple Neural Engine on Linux: a C library over the apple-ane accel driver'
+  depends=('glibc')
+  make -C "$pkgbase-$pkgver" PREFIX=/usr DESTDIR="$pkgdir" install
+  install -Dm644 "$pkgbase-$pkgver/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
+
+package_python-ane() {
+  pkgdesc='The Apple Neural Engine on Linux: the numpy wrapper over libane'
+  depends=('libane' 'python' 'python-numpy')
+  local site
+  site=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+  install -Dm644 "$pkgbase-$pkgver/python/ane.py" "$pkgdir$site/ane.py"
+  python3 -m compileall -q -o 0 -o 1 -s "$pkgdir" -p / "$pkgdir$site/ane.py"
+}
