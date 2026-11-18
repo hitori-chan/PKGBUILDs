@@ -1,20 +1,21 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 pkgbase=libane
-pkgname=('libane' 'python-ane')
-pkgver=0.1.0
+pkgname=('libane' 'python-ane' 'onnxruntime-ep-ane')
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='The Apple Neural Engine on Linux, over the apple-ane accel driver'
 arch=('aarch64')
 url='https://github.com/hitori-chan/libane'
 license=('LGPL-2.1-or-later')
-makedepends=('linux-api-headers' 'python')
+makedepends=('linux-api-headers' 'onnxruntime-cpu' 'python')
 checkdepends=('python-numpy')
 source=("$pkgbase-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('b71125fdd076c97fd5d87ed39c4156b6d87ea0c561ddb46ee760a1e3cc43e66f')
+sha256sums=('4256e381f46e079282aa121e2f50e1bc6a65a60e2835666918b5936d584532af')
 
 build() {
   make -C "$pkgbase-$pkgver" PREFIX=/usr
+  make -C "$pkgbase-$pkgver" PREFIX=/usr ORT_INC=/usr/include/onnxruntime ort
 }
 
 check() {
@@ -35,4 +36,13 @@ package_python-ane() {
   site=$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
   install -Dm644 "$pkgbase-$pkgver/python/ane.py" "$pkgdir$site/ane.py"
   python3 -m compileall -q -o 0 -o 1 -s "$pkgdir" -p / "$pkgdir$site/ane.py"
+}
+
+package_onnxruntime-ep-ane() {
+  pkgdesc='The Apple Neural Engine on Linux: an ONNX Runtime plugin execution provider over libane'
+  depends=('glibc')
+  optdepends=('python-onnxruntime: to run it from Python'
+              'python-onnx: ane-epctx, which writes a model that runs a program')
+  make -C "$pkgbase-$pkgver" PREFIX=/usr DESTDIR="$pkgdir" install-ort
+  install -Dm755 "$pkgbase-$pkgver/ort/ane-epctx.py" "$pkgdir/usr/bin/ane-epctx"
 }
