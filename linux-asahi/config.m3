@@ -9,6 +9,7 @@ CONFIG_TRANSPARENT_HUGEPAGE_MADVISE=y
 CONFIG_VIDEO_APPLE_JPEG=m
 CONFIG_VIDEO_APPLE_PRORES=m
 CONFIG_VIDEO_APPLE_AVE=m
+CONFIG_VIDEO_APPLE_MSR=m
 CONFIG_DRM_ACCEL_APPLE_ANE=m
 CONFIG_KPROBE_EVENTS_ON_NOTRACE=y
 CONFIG_MAILBOX=y
@@ -25,3 +26,5 @@ CONFIG_SCHED_CLASS_EXT=y
 CONFIG_ANON_VMA_NAME=y
 # the trackpad's actuator as FF_HAPTIC on its evdev (linux#573's hid-apple-actuator; magicmouse reaches it as a module)
 CONFIG_HID_APPLE_ACTUATOR=m
+# macOS's power modes (Automatic, High Power) as a platform profile, through the SMC's zETM
+CONFIG_MACSMC_PROFILE=y

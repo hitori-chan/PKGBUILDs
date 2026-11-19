@@ -3,9 +3,10 @@
 # Contributor: Thomas Baechler <thomas@archlinux.org>
 
 pkgname=libfprint
-_commit=9f3abdad58206f83be2751c997aa40d631748884
+_tree=libfprint
+_commit=88e987dd840e45f81db35ad14f2cf869ab405af5
 _srcname=libfprint-$_commit
-pkgver=1.94.101.r8.g${_commit::8}
+pkgver=1.94.101.r10.g${_commit::8}
 pkgrel=1
 pkgdesc="Library for fingerprint readers"
 url="https://github.com/hitori-chan/libfprint"
@@ -36,7 +37,7 @@ checkdepends=(
 provides=(libfprint-2.so)
 groups=(fprint)
 source=("$_srcname.tar.gz::https://github.com/hitori-chan/libfprint/archive/$_commit.tar.gz")
-sha256sums=('25ab779a5b34fe1ed1a9836d95c0d1643fc66a9a1a43c57c6b7ab283c2d4fa9b')
+sha256sums=('1bfc95c117f87baf21854d291d717349ccff3bff262d02be0d1ab5d1b4a4314a')
 
 build() {
   local meson_options=(
