@@ -7,7 +7,7 @@ _staging=6cc805ea57132eeaf44764e9213823c9b8d0d300
 _mingw=llvm-mingw-20261020-ucrt-ubuntu-22.04-aarch64
 pkgname=proton-ge-custom
 pkgver=11.12
-pkgrel=3
+pkgrel=4
 pkgdesc='GE-Proton on a 16K kernel with per-process page sizes (P3S): its aarch64 release, Wine as a 4K process, our fixes'
 arch=('aarch64')
 url='https://github.com/GloriousEggroll/proton-ge-custom'
@@ -26,6 +26,7 @@ source=("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$
         'wine-0005-ntdll-NtYieldExecution-sleeps.patch'
         'wine-0006-ntdll-4K-pages-on-a-kernel-with-per-process-page-sizes.patch'
         'fex-0004-ARM64EC-no-FPCR-write-at-exit-when-nothing-changes.patch'
+        'fex-0005-CMake-no-preserve_all-on-MinGW.patch'
         'proton-0001-FEX-full-x87-for-installers-in-every-game.patch')
 sha256sums=('cbf85e13a6a500cb6747881620b061faccf3c93e05e2102c6b5e992d5aa44c78'
             'be1ee9e60fabac4cbd0babb8f9db594d8d061def85c99ae54e32b1971cf8418f'
@@ -38,6 +39,7 @@ sha256sums=('cbf85e13a6a500cb6747881620b061faccf3c93e05e2102c6b5e992d5aa44c78'
             'a60013c81a6eaceb1e1570c3559c86ca40a3ad7a1de3841b48afa77ee40da82a'
             '7287f5cd491a03f57d553f76fa2774dee9e93d729c245425c58c0310b58680c3'
             '82864da863f1375305e813b7f8935d44a6dbacc8dfb6d2a94c9b9d5f394d3a0e'
+            '1bf6cf5c29eebc44fc3dc650fc38c7b5439941c1ce814ec96ecf3d28d0714a25'
             'e5102051626a43e503d1cc908af3764b076fd5c838236fd7f406f5c9318ae29e')
 
 prepare() {

@@ -1,0 +1,26 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 89765883..0883e371 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -255,16 +255,14 @@ check_cxx_source_compiles(
+ unset(CMAKE_REQUIRED_FLAGS)
+ if (HAS_CLANG_PRESERVE_ALL)
+   message(STATUS "Clang version ${CMAKE_CXX_COMPILER_VERSION}")
+-  set(CLANG_MINIMUM_VERSION 22.1)
+-  if (MINGW AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS ${CLANG_MINIMUM_VERSION})
+-    message(STATUS "Ignoring broken clang::preserve_all support")
++  if (MINGW)
++    # clang (23.1 included) sizes a Windows AArch64 preserve_all frame without the 8-byte pad that an odd number of
++    # GPR saves leaves before the 16-byte Q saves, so the first local lands on the first callee-saved slot: the x87
++    # handlers that call normal-ABI code (FYL2X, F2XM1, FSIN, FATAN...) return with x19 or x27 replaced by a local
++    message(STATUS "Ignoring broken clang::preserve_all support on MinGW")
+     set(HAS_CLANG_PRESERVE_ALL FALSE)
+   else()
+     message(STATUS "Has clang::preserve_all")
+-    if (MINGW)
+-      message(STATUS "Disabling asynchronous-unwind-tables due to bug with preserve_all and mingw")
+-      add_compile_options(-fno-asynchronous-unwind-tables)
+-    endif()
+   endif()
+ endif()
+ 
