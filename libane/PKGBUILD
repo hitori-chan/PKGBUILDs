@@ -2,8 +2,9 @@
 
 pkgbase=libane
 pkgname=('libane' 'python-ane' 'onnxruntime-ep-ane')
-pkgver=0.2.0
+pkgver=0.1.0
 pkgrel=1
+epoch=1
 pkgdesc='The Apple Neural Engine on Linux, over the apple-ane accel driver'
 arch=('aarch64')
 url='https://github.com/hitori-chan/libane'
@@ -11,7 +12,7 @@ license=('LGPL-2.1-or-later')
 makedepends=('linux-api-headers' 'onnxruntime-cpu' 'python')
 checkdepends=('python-numpy')
 source=("$pkgbase-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
-sha256sums=('4256e381f46e079282aa121e2f50e1bc6a65a60e2835666918b5936d584532af')
+sha256sums=('67db5b8093799ef6de54356c5c995c60851ed33a791c5541af604eb919f864ca')
 
 build() {
   make -C "$pkgbase-$pkgver" PREFIX=/usr
