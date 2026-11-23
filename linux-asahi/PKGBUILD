@@ -1,9 +1,9 @@
 # Maintainer: hitori-chan <hitori1403@gmail.com>
 
 _tree=linux
-_commit=4352b3c66e1333d4e3931bc8e2b2adb0d3023459
+_commit=93d94e6df6101a0d00cac91df1c3936c09cf9934
 _kver=7.3.4
-_rev=226
+_rev=227
 pkgrel=1
 
 _m1n1_version=1.9.9
