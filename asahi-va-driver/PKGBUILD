@@ -2,8 +2,8 @@
 
 pkgname=asahi-va-driver
 _tree=asahi-va-driver
-_commit=b71008d3153f7d46887aea05cd8f6fe8015b36ee
-pkgver=2.0.r15
+_commit=0977c59c84985afe7d4af5e5db88b4f9e338998c
+pkgver=2.0.r16
 pkgrel=1
 pkgdesc='VA-API driver for V4L2 stateless decoders, for the Apple Video Decoder'
 arch=('aarch64')
@@ -17,7 +17,7 @@ replaces=('libva-v4l2-request')
 source=(
   "asahi-va-driver-${_commit}.tar.gz::https://github.com/hitori-chan/asahi-va-driver/archive/${_commit}.tar.gz"
 )
-sha256sums=('01382b008a49a7c41e564a824f2dea323cc5756ab8f36485fd45e965035f016f')
+sha256sums=('2161e60e854aafe662642898dbd0b9006770392d98b3769236cc5a53d7c994b6')
 
 build() {
   arch-meson "asahi-va-driver-${_commit}" build
