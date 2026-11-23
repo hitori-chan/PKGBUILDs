@@ -3,9 +3,9 @@
 # Contributor: Ranieri Althoff <ranisalt+aur at gmail dot com>
 # Contributor: Mark Wagie <mark dot wagie at proton dot me>
 _pkgname=MangoHud
-_commit=9df8f5ff92f490b76a087c204150f8639994cb49
+_commit=84746991ab69f439c9fb5c4163921e1a308f6cbd
 pkgname=mangohud
-pkgver=0.8.4.r260
+pkgver=0.8.4.r290
 pkgrel=1
 pkgdesc="A Vulkan overlay layer for monitoring FPS, temperatures, CPU/GPU load and more."
 arch=('aarch64')
