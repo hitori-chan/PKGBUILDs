@@ -1,0 +1,97 @@
+From d31ce256b87dcea858dbd27b555b917470276623 Mon Sep 17 00:00:00 2001
+From: hitori-chan
+Date: Tue, 17 Nov 2026 13:35:24 +0700
+Subject: [PATCH] core: set logind's LockedHint while locked
+
+The session's LockedHint tells whoever offers an authentication in the
+session (pam_fprintd's terminal prompt) that the screen is locked, as
+GNOME's and KDE's lock screens do. It is set once the compositor
+confirms the lock and cleared at unlock; a lock that ends otherwise
+(the compositor's finished event) leaves it set, which costs the
+finger in terminals and never offers it to an unseen prompt. The
+system bus is opened with the fingerprint disabled too.
+---
+ src/core/Dbus.cpp     | 12 ++++++++++++
+ src/core/Dbus.hpp     |  5 +++++
+ src/core/hyprlock.cpp |  6 ++++--
+ 3 files changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/src/core/Dbus.cpp b/src/core/Dbus.cpp
+index e641f1d..657b745 100644
+--- a/src/core/Dbus.cpp
++++ b/src/core/Dbus.cpp
+@@ -7,9 +7,21 @@ CDbus::CDbus(bool enable) {
+     try {
+         m_connection        = sdbus::createSystemBusConnection();
+         m_freedesktopLogin1 = sdbus::createProxy(*m_connection, sdbus::ServiceName{"org.freedesktop.login1"}, sdbus::ObjectPath{"/org/freedesktop/login1"});
++        m_login1Session     = sdbus::createProxy(*m_connection, sdbus::ServiceName{"org.freedesktop.login1"}, sdbus::ObjectPath{"/org/freedesktop/login1/session/auto"});
+     } catch (sdbus::Error& e) {
+         Log::logger->log(Log::ERR, "dbus: failed to create connection or login proxy ({})", e.what());
++        m_login1Session.reset();
+         m_freedesktopLogin1.reset();
+         m_connection.reset();
+     }
+ }
++
++void CDbus::setLockedHint(bool locked) {
++    if (!m_login1Session)
++        return;
++    // a reply bounded so that neither the lock nor the exit waits on logind
++    try {
++        m_login1Session->callMethod("SetLockedHint").onInterface("org.freedesktop.login1.Session").withTimeout(std::chrono::milliseconds(500)).withArguments(locked);
++        Log::logger->log(Log::INFO, "dbus: LockedHint {}", locked);
++    } catch (sdbus::Error& e) { Log::logger->log(Log::ERR, "dbus: SetLockedHint({}) failed ({})", locked, e.what()); }
++}
+diff --git a/src/core/Dbus.hpp b/src/core/Dbus.hpp
+index a48b899..40dad5d 100644
+--- a/src/core/Dbus.hpp
++++ b/src/core/Dbus.hpp
+@@ -8,9 +8,14 @@ class CDbus {
+     CDbus(bool enable);
+     ~CDbus() = default;
+ 
++    // logind's LockedHint of the session (its own, else the user's display session): a lock screen's state for
++    // whoever offers an authentication in the session meanwhile (pam_fprintd's terminal prompt)
++    void setLockedHint(bool locked);
++
+     // nullptr if enable is false
+     std::shared_ptr<sdbus::IConnection> m_connection        = nullptr;
+     std::unique_ptr<sdbus::IProxy>      m_freedesktopLogin1 = nullptr;
++    std::unique_ptr<sdbus::IProxy>      m_login1Session     = nullptr;
+ };
+ 
+ inline UP<CDbus> g_dbus;
+diff --git a/src/core/hyprlock.cpp b/src/core/hyprlock.cpp
+index 8f7c500..c51387d 100644
+--- a/src/core/hyprlock.cpp
++++ b/src/core/hyprlock.cpp
+@@ -80,8 +80,8 @@ CHyprlock::CHyprlock(std::string_view wlDisplay, const bool immediateRender, con
+     const auto SZCURRENTD     = std::string{CURRENTDESKTOP ? CURRENTDESKTOP : ""};
+     m_sCurrentDesktop         = SZCURRENTD;
+ 
+-    static const auto ENABLEFINGERPRINT = g_pConfigManager->getValue<Hyprlang::INT>("auth:fingerprint:enabled");
+-    g_dbus                              = makeUnique<CDbus>(*ENABLEFINGERPRINT);
++    // the system bus for logind's LockedHint too, the fingerprint or not
++    g_dbus = makeUnique<CDbus>(true);
+ }
+ 
+ CHyprlock::~CHyprlock() {
+@@ -814,6 +814,7 @@ void CHyprlock::releaseSessionLock() {
+ 
+     m_sLockState.lock->sendUnlockAndDestroy();
+     m_sLockState.lock = nullptr;
++    g_dbus->setLockedHint(false);
+ 
+     Log::logger->log(Log::INFO, "Unlocked, exiting!");
+ 
+@@ -827,6 +828,7 @@ void CHyprlock::onLockLocked() {
+     Log::logger->log(Log::INFO, "onLockLocked called");
+ 
+     m_sLockState.locked = true;
++    g_dbus->setLockedHint(true);
+ }
+ 
+ void CHyprlock::onLockFinished() {
+-- 
+2.56.1
+
