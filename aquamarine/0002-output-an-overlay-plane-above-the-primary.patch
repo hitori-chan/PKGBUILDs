@@ -1,4 +1,4 @@
-From 0c6927adc646100ef90e3c2fa2c3d0e827311657 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: hitori-chan
 Subject: [PATCH] output: an overlay plane above the primary
 
@@ -28,10 +28,10 @@ failed, and it drew +0.04 to +0.06 W over the primary alone.
  8 files changed, 138 insertions(+), 12 deletions(-)
 
 diff --git a/include/aquamarine/backend/DRM.hpp b/include/aquamarine/backend/DRM.hpp
-index 2d0a09b..c8b2ab3 100644
+index 5051056..78178cc 100644
 --- a/include/aquamarine/backend/DRM.hpp
 +++ b/include/aquamarine/backend/DRM.hpp
-@@ -219,6 +219,7 @@ namespace Aquamarine {
+@@ -222,6 +222,7 @@ namespace Aquamarine {
  
          Hyprutils::Memory::CSharedPointer<SDRMPlane> primary;
          Hyprutils::Memory::CSharedPointer<SDRMPlane> cursor;
@@ -39,16 +39,16 @@ index 2d0a09b..c8b2ab3 100644
          Hyprutils::Memory::CWeakPointer<CDRMBackend> backend;
          Hyprutils::Memory::CSharedPointer<CDRMFB>    pendingCursor;
  
-@@ -254,6 +255,8 @@ namespace Aquamarine {
+@@ -257,6 +258,8 @@ namespace Aquamarine {
          virtual void                                                      scheduleFrame(const scheduleFrameReason reason = AQ_SCHEDULE_UNKNOWN);
          virtual void                                                      setCursorVisible(bool visible);
          virtual bool                                                      hasCursorPlane() const;
 +        virtual bool                                                      hasOverlayPlane() const;
 +        virtual std::vector<SDRMFormat>                                   getOverlayFormats();
          virtual Hyprutils::Math::Vector2D                                 cursorPlaneSize();
+         virtual const SCursorPlaneSizeHints&                              cursorPlaneSizeHints() const;
          virtual std::optional<std::chrono::steady_clock::time_point>      nextVBlank() const;
-         virtual size_t                                                    getGammaSize();
-@@ -304,7 +307,7 @@ namespace Aquamarine {
+@@ -308,7 +311,7 @@ namespace Aquamarine {
      };
  
      struct SDRMConnectorCommitData {
@@ -57,7 +57,7 @@ index 2d0a09b..c8b2ab3 100644
          COutputState::SInternalState              outputState;
          Hyprutils::Math::Vector2D                 cursorPos, cursorHotspot;
          bool                                      cursorVisible    = false;
-@@ -314,7 +317,7 @@ namespace Aquamarine {
+@@ -318,7 +321,7 @@ namespace Aquamarine {
          bool                                      test             = false;
          bool                                      enabled          = false;
          uint32_t                                  committed        = 0;
@@ -66,7 +66,7 @@ index 2d0a09b..c8b2ab3 100644
          DRMFBList                                 retiredFBs;
          Hyprutils::Math::CRegion                  damage;
          drmModeModeInfo                           modeInfo;
-@@ -373,7 +376,7 @@ namespace Aquamarine {
+@@ -377,7 +380,7 @@ namespace Aquamarine {
          IOutput::SParsedEDID                           parseEDID(std::vector<uint8_t> data);
          bool                                           commitState(SDRMConnectorCommitData& data);
          void                                           applyCommit(SDRMConnectorCommitData& data);
@@ -88,10 +88,10 @@ index 15c8a82..09a56b6 100644
          void         add(uint32_t id, uint32_t prop, uint64_t val);
          bool         addRaw(uint32_t id, uint32_t prop, uint64_t val) noexcept;
 diff --git a/include/aquamarine/output/Output.hpp b/include/aquamarine/output/Output.hpp
-index 6db1a30..f1bd46e 100644
+index 39928a3..3637696 100644
 --- a/include/aquamarine/output/Output.hpp
 +++ b/include/aquamarine/output/Output.hpp
-@@ -76,6 +76,7 @@ namespace Aquamarine {
+@@ -80,6 +80,7 @@ namespace Aquamarine {
              AQ_OUTPUT_STATE_CURSOR_SHAPE       = (1 << 14),
              AQ_OUTPUT_STATE_CURSOR_POS         = (1 << 15),
              AQ_OUTPUT_STATE_MAX_BPC            = (1 << 16),
@@ -99,7 +99,7 @@ index 6db1a30..f1bd46e 100644
          };
  
          // how the primary plane shows the buffer. Part of the buffer: setBuffer() resets it,
-@@ -111,6 +112,8 @@ namespace Aquamarine {
+@@ -115,6 +116,8 @@ namespace Aquamarine {
              eOutputColorRange                              colorRange     = AQ_OUTPUT_COLOR_RANGE_AUTO;
              uint8_t                                        maxBpc         = 0; // max link bits per component. 0 = unset (use the highest the connector allows)
              SBufferPlacement                               bufferPlacement;
@@ -108,7 +108,7 @@ index 6db1a30..f1bd46e 100644
          };
  
          class CSnapshot {
-@@ -122,11 +125,11 @@ namespace Aquamarine {
+@@ -126,11 +129,11 @@ namespace Aquamarine {
              int                   error() const;
  
            private:
@@ -122,9 +122,9 @@ index 6db1a30..f1bd46e 100644
              Hyprutils::OS::CFileDescriptor m_explicitInFence;
              int                            m_error = 0;
  
-@@ -161,10 +164,11 @@ namespace Aquamarine {
+@@ -165,10 +168,11 @@ namespace Aquamarine {
          void                  setColorRange(eOutputColorRange range);
-         void                  setMaxBpc(uint8_t maxBpc); 
+         void                  setMaxBpc(uint8_t maxBpc);
          void                  setBufferPlacement(const SBufferPlacement& placement); // after setBuffer(), goes out with that buffer
 +        void                  setOverlayBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer, int32_t inFence = -1); // above the primary; null: off. A commit without it leaves the overlay as it is
  
@@ -135,17 +135,17 @@ index 6db1a30..f1bd46e 100644
          uint64_t                 nextGeneration      = 0;
  
          void                     markCommitted(uint32_t properties);
-@@ -268,6 +272,8 @@ namespace Aquamarine {
+@@ -273,6 +277,8 @@ namespace Aquamarine {
          virtual void                                                      moveCursor(const Hyprutils::Math::Vector2D& coord, bool skipSchedule = false); // includes the hotspot
          virtual void                                                      setCursorVisible(bool visible); // moving the cursor will make it visible again without this util
          virtual bool                                                      hasCursorPlane() const;
 +        virtual bool                                                      hasOverlayPlane() const; // a plane above the primary that takes a whole-output buffer
 +        virtual std::vector<SDRMFormat>                                   getOverlayFormats();
          virtual Hyprutils::Math::Vector2D                                 cursorPlaneSize(); // -1, -1 means no set size, 0, 0 means error
+         virtual const SCursorPlaneSizeHints&                              cursorPlaneSizeHints() const;
          virtual std::optional<std::chrono::steady_clock::time_point>      nextVBlank() const;
-         virtual void                                                      scheduleFrame(const scheduleFrameReason reason = AQ_SCHEDULE_UNKNOWN);
 diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
-index afc01b8..976efa5 100644
+index 56ea948..dd051ae 100644
 --- a/src/backend/Wayland.cpp
 +++ b/src/backend/Wayland.cpp
 @@ -646,7 +646,7 @@ bool Aquamarine::CWaylandOutput::destroy() {
@@ -169,10 +169,10 @@ index afc01b8..976efa5 100644
      }
  
 diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
-index d58a770..2176835 100644
+index ee214be..73d5d3c 100644
 --- a/src/backend/drm/DRM.cpp
 +++ b/src/backend/drm/DRM.cpp
-@@ -692,6 +692,9 @@ void Aquamarine::CDRMBackend::restoreAfterVT() {
+@@ -690,6 +690,9 @@ void Aquamarine::CDRMBackend::restoreAfterVT() {
          if (data.cursorFB && (data.cursorFB->dead || data.cursorFB->buffer->dmabuf().modifier == DRM_FORMAT_MOD_INVALID))
              data.cursorFB = nullptr;
  
@@ -182,7 +182,7 @@ index d58a770..2176835 100644
          backend->log(AQ_LOG_DEBUG,
                       std::format("drm: Restoring crtc {} with clock {} hdisplay {} vdisplay {} vrefresh {}", c->crtc->id, data.modeInfo.clock, data.modeInfo.hdisplay,
                                   data.modeInfo.vdisplay, data.modeInfo.vrefresh));
-@@ -1723,6 +1726,14 @@ bool Aquamarine::SDRMPlane::init(drmModePlane* plane) {
+@@ -1724,6 +1727,14 @@ bool Aquamarine::SDRMPlane::init(drmModePlane* plane) {
              CRTC->cursor = self.lock();
              break;
          }
@@ -197,7 +197,7 @@ index d58a770..2176835 100644
      }
  
      return true;
-@@ -1851,6 +1862,7 @@ void Aquamarine::SDRMConnector::releaseFBReferences(DRMFBList* deferred) {
+@@ -1876,6 +1887,7 @@ void Aquamarine::SDRMConnector::releaseFBReferences(DRMFBList* deferred) {
      if (crtc) {
          clearPlane(crtc->primary);
          clearPlane(crtc->cursor);
@@ -205,7 +205,7 @@ index d58a770..2176835 100644
          crtc->pendingCursor.reset();
      }
  
-@@ -2180,7 +2192,7 @@ bool Aquamarine::SDRMConnector::commitState(SDRMConnectorCommitData& data) {
+@@ -2206,7 +2218,7 @@ bool Aquamarine::SDRMConnector::commitState(SDRMConnectorCommitData& data) {
  
          applyCommit(data);
          if (!(data.flags & DRM_MODE_PAGE_FLIP_EVENT))
@@ -214,7 +214,7 @@ index d58a770..2176835 100644
  
          for (const auto& fb : data.retiredFBs)
              releaseFBBuffer(fb);
-@@ -2242,6 +2254,31 @@ void Aquamarine::SDRMConnector::applyCommit(SDRMConnectorCommitData& data) {
+@@ -2268,6 +2280,31 @@ void Aquamarine::SDRMConnector::applyCommit(SDRMConnectorCommitData& data) {
              crtc->pendingCursor.reset();
      }
  
@@ -246,7 +246,7 @@ index d58a770..2176835 100644
      if (data.committed & COutputState::AQ_OUTPUT_STATE_MODE)
          refresh = calculateRefresh(data.modeInfo);
  
-@@ -2308,7 +2345,7 @@ void Aquamarine::SDRMConnector::setCRTC(SP<SDRMCRTC> newCRTC) {
+@@ -2334,7 +2371,7 @@ void Aquamarine::SDRMConnector::setCRTC(SP<SDRMCRTC> newCRTC) {
      crtc = newCRTC;
  }
  
@@ -255,7 +255,7 @@ index d58a770..2176835 100644
      DRMFBList  retired;
      const auto presentPlane = [&retired](const SP<SDRMPlane>& plane) {
          if (!plane || !plane->backSet)
-@@ -2325,6 +2362,8 @@ void Aquamarine::SDRMConnector::onPresent(bool primary, bool cursor, DRMFBList*
+@@ -2351,6 +2388,8 @@ void Aquamarine::SDRMConnector::onPresent(bool primary, bool cursor, DRMFBList*
          presentPlane(crtc->primary);
      if (cursor)
          presentPlane(crtc->cursor);
@@ -264,7 +264,7 @@ index d58a770..2176835 100644
  
      if (deferred) {
          for (auto& fb : retired)
-@@ -2490,6 +2529,10 @@ bool Aquamarine::CDRMOutput::prepareAsyncCommitData(const COutputState::CSnapsho
+@@ -2516,6 +2555,10 @@ bool Aquamarine::CDRMOutput::prepareAsyncCommitData(const COutputState::CSnapsho
      if (data.cursorFB && (data.cursorFB->dead || data.cursorFB->buffer->dmabuf().modifier == DRM_FORMAT_MOD_INVALID))
          data.cursorFB.reset();
  
@@ -275,7 +275,7 @@ index d58a770..2176835 100644
      const auto MODE = STATE.mode ? STATE.mode : STATE.customMode;
      if (!MODE)
          return false;
-@@ -2798,6 +2841,26 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+@@ -2824,6 +2867,26 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
          }
      }
  
@@ -302,8 +302,8 @@ index d58a770..2176835 100644
      if (COMMITTED & COutputState::eOutputStateProperties::AQ_OUTPUT_STATE_HDR)
          data.hdrMetadata = STATE.hdrMetadata;
  
-@@ -3060,6 +3123,16 @@ Vector2D Aquamarine::CDRMOutput::cursorPlaneSize() {
-     return backend->drmProps.cursorSize;
+@@ -3093,6 +3156,16 @@ const SCursorPlaneSizeHints& Aquamarine::CDRMOutput::cursorPlaneSizeHints() cons
+     return connector->crtc->cursor->sizeHints;
  }
  
 +bool Aquamarine::CDRMOutput::hasOverlayPlane() const {
@@ -385,7 +385,7 @@ index 1d9305d..f58b10a 100644
  }
  
 diff --git a/src/output/Output.cpp b/src/output/Output.cpp
-index 9813ec2..3eeb4f7 100644
+index 0f559fd..18c1a0a 100644
 --- a/src/output/Output.cpp
 +++ b/src/output/Output.cpp
 @@ -46,6 +46,14 @@ bool Aquamarine::IOutput::hasCursorPlane() const {
@@ -403,7 +403,7 @@ index 9813ec2..3eeb4f7 100644
  void Aquamarine::IOutput::scheduleFrame(const scheduleFrameReason reason) {
      ;
  }
-@@ -70,7 +78,7 @@ bool Aquamarine::IOutput::destroy() {
+@@ -75,7 +83,7 @@ bool Aquamarine::IOutput::destroy() {
      return false;
  }
  
@@ -412,7 +412,7 @@ index 9813ec2..3eeb4f7 100644
      m_owner(owner), m_state(state), m_generations(generations) {
      if (!(m_state.committed & AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE) || m_state.explicitInFence < 0)
          return;
-@@ -217,6 +225,12 @@ void Aquamarine::COutputState::setBufferPlacement(const SBufferPlacement& placem
+@@ -222,6 +230,12 @@ void Aquamarine::COutputState::setBufferPlacement(const SBufferPlacement& placem
      internalState.bufferPlacement = placement;
  }
  
@@ -425,6 +425,3 @@ index 9813ec2..3eeb4f7 100644
  void Aquamarine::COutputState::setExplicitInFence(int32_t fenceFD) {
      internalState.explicitInFence = fenceFD;
      markCommitted(AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE);
--- 
-2.56.1
-

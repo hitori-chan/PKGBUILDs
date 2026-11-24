@@ -2,9 +2,9 @@
 # Contributor: Aaron Blasko <blaskoazzolaaaron [at] gmail.com>
 
 pkgname=aquamarine
-_commit=7c1c55b2a76ddb9f6602f8c0886ecf1b899529f9
-pkgver=0.16.0.r8.g${_commit::8}
-pkgrel=2
+_commit=a0228bb8b5398a2c19ec7c0d5112b92120f98910
+pkgver=0.16.0.r18.g${_commit::8}
+pkgrel=1
 pkgdesc='a very light linux rendering backend library'
 arch=(aarch64)
 url="https://github.com/hyprwm/$pkgname"
@@ -28,16 +28,16 @@ makedepends=(cmake
              hyprwayland-scanner)
 provides=("lib$pkgname.so")
 _archive="$pkgname-$_commit"
-# upstream's main eight commits past 0.16.0 (a GBM performance fix among them), and the primary plane placed with a
+# upstream's main eighteen commits past 0.16.0 (a GBM performance fix among them), and the primary plane placed with a
 # source and destination rectangle and a YCbCr encoding, so Hyprland scans a video's NV12 or P010 buffer out on the
 # DCP's primary plane; an overlay plane above it, which takes Hyprland's composite while a video or a window's content
 # sits on the primary under it (render:underlay)
 source=("$_archive.tar.gz::$url/archive/$_commit.tar.gz"
         0001-output-place-the-primary-buffer-with-a-source-destin.patch
         0002-output-an-overlay-plane-above-the-primary.patch)
-sha256sums=('b031e95d8249266549f7e93257e9010c9c4d4674924fafa31b4bfd3eda7930cf'
-            'ecd5fe3ee0bf2e2b9dd9118d11a8adc30494495ac31ec2c93b981387d1b3c019'
-            'd80b9482c63df5946aef10692871d4581e1d83f6d4e0cc658deb14d1241d5b54')
+sha256sums=('09ce83a55abd6aaed1a2d97fa6534edb7bd93b09de7a0664b2952850943a67da'
+            '931817709e118b65d7d8bed4c4e272e6f1519e4a2cc9bc7eb7dd10b10b82bf88'
+            '80207ca724cb2597f0c20f696de4394dd5eb9d2abbf6cc4f2612a754af7a1d21')
 
 prepare() {
 	cd "$_archive"

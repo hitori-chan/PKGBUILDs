@@ -1,7 +1,7 @@
-From 392b307778f7c97292d9570733f600e255fb48c7 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: hitori-chan
-Subject: [PATCH] output: place the primary buffer with a source, destination
- and YCbCr
+Subject: [PATCH] output: place the primary buffer with a source,
+ destination and YCbCr
 
 COutputState gains a buffer placement: the source rectangle in buffer
 pixels, the destination on the output, and a YCbCr buffer's matrix and
@@ -24,21 +24,21 @@ default one.
  10 files changed, 128 insertions(+), 14 deletions(-)
 
 diff --git a/include/aquamarine/backend/DRM.hpp b/include/aquamarine/backend/DRM.hpp
-index 25e27da..2d0a09b 100644
+index a3a1653..5051056 100644
 --- a/include/aquamarine/backend/DRM.hpp
 +++ b/include/aquamarine/backend/DRM.hpp
-@@ -150,8 +150,9 @@ namespace Aquamarine {
+@@ -153,8 +153,9 @@ namespace Aquamarine {
                  uint32_t hotspot_y;
                  uint32_t in_fence_fd;
                  uint32_t color_range;
 +                uint32_t color_encoding;
              } values;
--            uint32_t props[18] = {0};
-+            uint32_t props[19] = {0};
+-            uint32_t props[19] = {0};
++            uint32_t props[20] = {0};
          };
          UDRMPlaneProps props;
  
-@@ -164,6 +165,18 @@ namespace Aquamarine {
+@@ -167,6 +168,18 @@ namespace Aquamarine {
              uint32_t props[2] = {0};
          };
          UDRMPlaneColorRange colorRange;
@@ -57,7 +57,7 @@ index 25e27da..2d0a09b 100644
      };
  
      struct SDRMCRTC {
-@@ -410,6 +423,9 @@ namespace Aquamarine {
+@@ -414,6 +427,9 @@ namespace Aquamarine {
              uint32_t          crtcID      = 0;
              bool              propsCached = false;
              eOutputColorRange colorRange  = AQ_OUTPUT_COLOR_RANGE_AUTO;
@@ -81,10 +81,10 @@ index 735f95d..15c8a82 100644
  
          void         rollback(SDRMConnectorCommitData& data);
 diff --git a/include/aquamarine/output/Output.hpp b/include/aquamarine/output/Output.hpp
-index 5ab263a..6db1a30 100644
+index ea76c64..39928a3 100644
 --- a/include/aquamarine/output/Output.hpp
 +++ b/include/aquamarine/output/Output.hpp
-@@ -46,6 +46,14 @@ namespace Aquamarine {
+@@ -50,6 +50,14 @@ namespace Aquamarine {
          AQ_OUTPUT_COLOR_RANGE_LIMITED,  // force limited (16-235) range
      };
  
@@ -99,7 +99,7 @@ index 5ab263a..6db1a30 100644
      class IOutput;
  
      class COutputState {
-@@ -70,6 +78,17 @@ namespace Aquamarine {
+@@ -74,6 +82,17 @@ namespace Aquamarine {
              AQ_OUTPUT_STATE_MAX_BPC            = (1 << 16),
          };
  
@@ -117,7 +117,7 @@ index 5ab263a..6db1a30 100644
          struct SInternalState {
              uint32_t                                       committed = 0; // enum eOutputStateProperties
  
-@@ -91,6 +110,7 @@ namespace Aquamarine {
+@@ -95,6 +114,7 @@ namespace Aquamarine {
              uint16_t                                       contentType    = DRM_MODE_CONTENT_TYPE_GRAPHICS;
              eOutputColorRange                              colorRange     = AQ_OUTPUT_COLOR_RANGE_AUTO;
              uint8_t                                        maxBpc         = 0; // max link bits per component. 0 = unset (use the highest the connector allows)
@@ -125,16 +125,16 @@ index 5ab263a..6db1a30 100644
          };
  
          class CSnapshot {
-@@ -140,6 +160,7 @@ namespace Aquamarine {
+@@ -144,6 +164,7 @@ namespace Aquamarine {
          void                  setContentType(const uint16_t drmContentType);
          void                  setColorRange(eOutputColorRange range);
-         void                  setMaxBpc(uint8_t maxBpc); 
+         void                  setMaxBpc(uint8_t maxBpc);
 +        void                  setBufferPlacement(const SBufferPlacement& placement); // after setBuffer(), goes out with that buffer
  
        private:
          SInternalState           internalState;
 diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
-index 6af7b93..afc01b8 100644
+index ad126b5..56ea948 100644
 --- a/src/backend/Wayland.cpp
 +++ b/src/backend/Wayland.cpp
 @@ -645,6 +645,10 @@ bool Aquamarine::CWaylandOutput::destroy() {
@@ -161,10 +161,10 @@ index 6af7b93..afc01b8 100644
          pixelSize = STATE.customMode->pixelSize;
      else if (STATE.mode)
 diff --git a/src/backend/drm/DRM.cpp b/src/backend/drm/DRM.cpp
-index e2e9b7c..d58a770 100644
+index aa61653..ee214be 100644
 --- a/src/backend/drm/DRM.cpp
 +++ b/src/backend/drm/DRM.cpp
-@@ -1657,6 +1657,9 @@ bool Aquamarine::SDRMPlane::init(drmModePlane* plane) {
+@@ -1655,6 +1655,9 @@ bool Aquamarine::SDRMPlane::init(drmModePlane* plane) {
      if (props.values.color_range)
          getDRMPlaneColorRange(backend->gpu->fd, props.values.color_range, &colorRange);
  
@@ -174,7 +174,7 @@ index e2e9b7c..d58a770 100644
      if (!getDRMProp(backend->gpu->fd, id, props.values.type, &type))
          return false;
  
-@@ -2816,8 +2819,10 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
+@@ -2842,8 +2845,10 @@ bool Aquamarine::CDRMOutput::commitState(bool onlyTest) {
      // so drivers without plane scaling (e.g. virtio-gpu) reject stale-size buffers,
      // making larger modes unreachable.
      // If the consumer already reconfigured the swapchain to the new size, attach a fresh buffer from it.
@@ -187,7 +187,7 @@ index e2e9b7c..d58a770 100644
              if (auto newFB = CDRMFB::create(newBuf, backend, nullptr); newFB && !newFB->dead) {
                  data.mainFB           = newFB;
 diff --git a/src/backend/drm/Props.cpp b/src/backend/drm/Props.cpp
-index 4c1e3cf..9aa8ddd 100644
+index 50e2187..2ab4998 100644
 --- a/src/backend/drm/Props.cpp
 +++ b/src/backend/drm/Props.cpp
 @@ -57,6 +57,7 @@ static const struct prop_info crtc_info[] = {
@@ -198,7 +198,7 @@ index 4c1e3cf..9aa8ddd 100644
      {.name = "COLOR_RANGE", .index = INDEX(color_range)},
      {.name = "CRTC_H", .index = INDEX(crtc_h)},
      {.name = "CRTC_ID", .index = INDEX(crtc_id)},
-@@ -85,6 +86,14 @@ static const struct prop_info colorrange_info[] = {
+@@ -86,6 +87,14 @@ static const struct prop_info colorrange_info[] = {
  #undef INDEX
  };
  
@@ -213,7 +213,7 @@ index 4c1e3cf..9aa8ddd 100644
  namespace Aquamarine {
  
      static int comparePropInfo(const void* arg1, const void* arg2) {
-@@ -151,6 +160,10 @@ namespace Aquamarine {
+@@ -152,6 +161,10 @@ namespace Aquamarine {
          return scanPropertyEnum(fd, id, out->props, colorrange_info, sizeof(colorrange_info) / sizeof(colorrange_info[0]));
      }
  
@@ -389,10 +389,10 @@ index 5c30486..1d9305d 100644
  }
  
 diff --git a/src/output/Output.cpp b/src/output/Output.cpp
-index 649f27d..9813ec2 100644
+index 9cad8a3..0f559fd 100644
 --- a/src/output/Output.cpp
 +++ b/src/output/Output.cpp
-@@ -208,10 +208,15 @@ void Aquamarine::COutputState::setFormat(uint32_t drmFormat) {
+@@ -213,10 +213,15 @@ void Aquamarine::COutputState::setFormat(uint32_t drmFormat) {
  }
  
  void Aquamarine::COutputState::setBuffer(Hyprutils::Memory::CSharedPointer<IBuffer> buffer) {
@@ -409,6 +409,3 @@ index 649f27d..9813ec2 100644
  void Aquamarine::COutputState::setExplicitInFence(int32_t fenceFD) {
      internalState.explicitInFence = fenceFD;
      markCommitted(AQ_OUTPUT_STATE_EXPLICIT_IN_FENCE);
--- 
-2.56.1
-
