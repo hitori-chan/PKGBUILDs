@@ -3,9 +3,9 @@
 # Contributor: Matthias Kurz <m.kurz@irregular.at>
 
 pkgname=asahi-audio
-_commit=ab1b46928d056bb02bb4ad72d522dab57dc9efe1
-pkgver=5.0.r2.g${_commit::8}
-pkgrel=3
+_commit=f8f20535c9af07fe92ec8fc5f11262fb6671d371
+pkgver=5.0.r5.g${_commit::8}
+pkgrel=1
 pkgdesc='Linux Userspace Audio Configuration'
 arch=('aarch64')
 url='http://asahilinux.org'
@@ -17,7 +17,7 @@ source=(
   tweeter-delay.patch
 )
 sha256sums=('SKIP'
-            'ff0349fff55bd4ccf718312452b9d1b9523155438b26fc41a1ff58fa506c8d96')
+            'e92be6f9c59a038a2b9cfe0c16bbbe8e9e61159d7b54fb9353c7c2f8662e4710')
 
 build() {
   cd "${srcdir}/${pkgname}-${_commit}"
@@ -26,7 +26,8 @@ build() {
   sed -i -e 's/^\(\s*\)"node.passive": "true",/\1"node.passive": "true",\n\1"node.pause-on-idle": "false",/' \
     -e 's/^\(\s*\)"priority.session": 850,/\1"priority.session": 850,\n\1"node.pause-on-idle": "false",/' \
     firs/j314/graph-j504.json firs/j314/graph-j514.json
-  # The woofers' two compressors look 5 ms ahead each, the tweeters nothing: delay the tweeters 10 ms to match
+  # The woofers' limiter looks 0.25 ms ahead (upstream's 887b3206 dropped the multiband's 5 ms), the tweeters nothing:
+  # delay the tweeters 0.25 ms to match
   patch -Np1 -i "${srcdir}/tweeter-delay.patch"
 }
 
