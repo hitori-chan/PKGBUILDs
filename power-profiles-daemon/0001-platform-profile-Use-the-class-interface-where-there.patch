@@ -1,0 +1,399 @@
+From 830e8298763b0c6fe6a9a05a478e066f0fc45789 Mon Sep 17 00:00:00 2001
+From: hitori-chan <hitori1403@gmail.com>
+Date: Tue, 24 Nov 2026 11:13:39 +0700
+Subject: [PATCH 1/4] platform-profile: Use the class interface where there is
+ no ACPI
+
+A machine without ACPI has no /sys/firmware/acpi/platform_profile, the
+legacy file the kernel builds over the handlers of the platform-profile
+class, only the class devices: /sys/class/platform-profile/*/{profile,
+choices} (Documentation/ABI/testing/sysfs-class-platform-profile). Where the
+legacy file is absent, use those devices as it would: offer the choices they
+share, write the profile to each, read their common profile ("custom" when
+they differ), and follow each one's changes.
+
+The driver keeps its name, so a saved configuration still applies.
+---
+ src/ppd-driver-platform-profile.c | 175 +++++++++++++++++++++---------
+ tests/integration_test.py         |  69 ++++++++++++
+ 2 files changed, 194 insertions(+), 50 deletions(-)
+
+diff --git a/src/ppd-driver-platform-profile.c b/src/ppd-driver-platform-profile.c
+index 28fc335..d9bf10b 100644
+--- a/src/ppd-driver-platform-profile.c
++++ b/src/ppd-driver-platform-profile.c
+@@ -18,6 +18,10 @@
+ #define LAPMODE_SYSFS_NAME "dytc_lapmode"
+ #define ACPI_PLATFORM_PROFILE_PATH "/sys/firmware/acpi/platform_profile"
+ #define ACPI_PLATFORM_PROFILE_CHOICES_PATH "/sys/firmware/acpi/platform_profile_choices"
++/* The class interface, the only one where there is no ACPI:
++ * https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-platform-profile
++ */
++#define CLASS_PLATFORM_PROFILE_PATH "/sys/class/platform-profile"
+ 
+ struct _PpdDriverPlatformProfile
+ {
+@@ -30,8 +34,10 @@ struct _PpdDriverPlatformProfile
+   char **profile_choices;
+   gboolean has_low_power;
+   GFileMonitor *lapmode_mon;
+-  GFileMonitor *acpi_platform_profile_mon;
+-  gulong acpi_platform_profile_changed_id;
++  /* ACPI's legacy file, or each class device's profile and choices */
++  GPtrArray *profile_paths;
++  GPtrArray *choices_paths;
++  GPtrArray *profile_mons;
+ };
+ 
+ G_DEFINE_TYPE (PpdDriverPlatformProfile, ppd_driver_platform_profile, PPD_TYPE_DRIVER_PLATFORM)
+@@ -101,46 +107,75 @@ acpi_platform_profile_value_to_profile (const char *str)
+ }
+ 
+ static PpdProfile
+-read_platform_profile (void)
++read_platform_profile (PpdDriverPlatformProfile *self)
+ {
+-  g_autofree char *platform_profile_path = NULL;
+   g_autofree char *new_profile_str = NULL;
+-  g_autoptr(GError) error = NULL;
+   PpdProfile new_profile;
+ 
+-  platform_profile_path = ppd_utils_get_sysfs_path (ACPI_PLATFORM_PROFILE_PATH);
+-  if (!g_file_get_contents (platform_profile_path,
+-                            &new_profile_str, NULL, &error)) {
+-    g_debug ("Failed to get contents for '%s': %s",
+-             platform_profile_path,
+-             error->message);
+-    return PPD_PROFILE_UNSET;
++  for (guint i = 0; i < self->profile_paths->len; i++) {
++    const char *path = g_ptr_array_index (self->profile_paths, i);
++    g_autofree char *str = NULL;
++    g_autoptr(GError) error = NULL;
++
++    if (!g_file_get_contents (path, &str, NULL, &error)) {
++      g_debug ("Failed to get contents for '%s': %s", path, error->message);
++      return PPD_PROFILE_UNSET;
++    }
++
++    g_strchomp (str);
++    if (new_profile_str == NULL) {
++      new_profile_str = g_steal_pointer (&str);
++    } else if (!g_str_equal (new_profile_str, str)) {
++      /* what the legacy file shows as "custom" */
++      g_debug ("Platform profiles differ: '%s' and '%s'", new_profile_str, str);
++      return PPD_PROFILE_UNSET;
++    }
+   }
+ 
+-  new_profile = acpi_platform_profile_value_to_profile (g_strchomp (new_profile_str));
++  new_profile = acpi_platform_profile_value_to_profile (new_profile_str);
+   g_debug ("ACPI performance_profile is now '%s', so profile is detected as %s",
+            g_strchomp (new_profile_str),
+            ppd_profile_to_str (new_profile));
+   return new_profile;
+ }
+ 
++/* The choices every file offers */
+ static gboolean
+ save_platform_profile_choices (PpdDriverPlatformProfile *self)
+ {
+-  g_autofree char *platform_profile_choices_path = NULL;
+-  g_autofree char *choices_str = NULL;
+-  g_autoptr(GError) error = NULL;
+-
+-  platform_profile_choices_path = ppd_utils_get_sysfs_path (ACPI_PLATFORM_PROFILE_CHOICES_PATH);
+-  if (!g_file_get_contents (platform_profile_choices_path,
+-                            &choices_str, NULL, &error)) {
+-    g_debug ("Failed to get contents for '%s': %s",
+-             platform_profile_choices_path,
+-             error->message);
+-    return FALSE;
++  g_autoptr(GPtrArray) common = NULL;
++
++  for (guint i = 0; i < self->choices_paths->len; i++) {
++    const char *path = g_ptr_array_index (self->choices_paths, i);
++    g_autofree char *choices_str = NULL;
++    g_auto(GStrv) choices = NULL;
++    g_autoptr(GError) error = NULL;
++
++    if (!g_file_get_contents (path, &choices_str, NULL, &error)) {
++      g_debug ("Failed to get contents for '%s': %s", path, error->message);
++      return FALSE;
++    }
++
++    choices = g_strsplit_set (choices_str, " \n", -1);
++    if (common == NULL) {
++      common = g_ptr_array_new_with_free_func (g_free);
++      for (guint j = 0; choices[j] != NULL; j++)
++        g_ptr_array_add (common, g_strdup (choices[j]));
++      continue;
++    }
++
++    for (guint j = common->len; j > 0; j--) {
++      if (!g_strv_contains ((const char * const *) choices,
++                            g_ptr_array_index (common, j - 1)))
++        g_ptr_array_remove_index (common, j - 1);
++    }
+   }
+ 
+-  self->profile_choices = g_strsplit_set (choices_str, " \n", -1);
++  if (common == NULL)
++    return FALSE;
++
++  g_ptr_array_add (common, NULL);
++  self->profile_choices = (char **) g_ptr_array_free (g_steal_pointer (&common), FALSE);
+   return TRUE;
+ }
+ 
+@@ -184,7 +219,7 @@ update_acpi_platform_profile_state (PpdDriverPlatformProfile *self)
+ {
+   PpdProfile new_profile;
+ 
+-  new_profile = read_platform_profile ();
++  new_profile = read_platform_profile (self);
+   if (new_profile == PPD_PROFILE_UNSET ||
+       new_profile == self->acpi_platform_profile)
+     return;
+@@ -218,7 +253,7 @@ acpi_platform_profile_changed (GFileMonitor      *monitor,
+ {
+   PpdDriverPlatformProfile *self = user_data;
+ 
+-  g_debug (ACPI_PLATFORM_PROFILE_PATH " changed (%d)", event_type);
++  g_debug ("%s changed (%d)", g_file_peek_path (file), event_type);
+   if (self->probe_result == PPD_PROBE_RESULT_DEFER) {
+     g_signal_emit_by_name (G_OBJECT (self), "probe-request", 0);
+     return;
+@@ -238,10 +273,10 @@ ppd_driver_platform_profile_activate_profile (PpdDriver                   *drive
+ {
+   PpdDriverPlatformProfile *self = PPD_DRIVER_PLATFORM_PROFILE (driver);
+   g_autoptr(GError) local_error = NULL;
+-  g_autofree char *platform_profile_path = NULL;
+   const char *platform_profile_value;
++  gboolean written;
+ 
+-  g_return_val_if_fail (self->acpi_platform_profile_mon, FALSE);
++  g_return_val_if_fail (self->profile_paths->len > 0, FALSE);
+ 
+   if (self->acpi_platform_profile == profile) {
+     g_debug ("Can't switch to %s mode, already there",
+@@ -257,17 +292,19 @@ ppd_driver_platform_profile_activate_profile (PpdDriver                   *drive
+     return TRUE;
+   }
+ 
+-  g_signal_handler_block (G_OBJECT (self->acpi_platform_profile_mon), self->acpi_platform_profile_changed_id);
+-  platform_profile_path = ppd_utils_get_sysfs_path (ACPI_PLATFORM_PROFILE_PATH);
+-  if (!ppd_utils_write (platform_profile_path,
+-                        profile_to_acpi_platform_profile_value (self, profile), &local_error)) {
++  for (guint i = 0; i < self->profile_mons->len; i++)
++    g_signal_handlers_block_by_func (g_ptr_array_index (self->profile_mons, i),
++                                     acpi_platform_profile_changed, self);
++  written = ppd_utils_write_files (self->profile_paths, platform_profile_value, &local_error);
++  for (guint i = 0; i < self->profile_mons->len; i++)
++    g_signal_handlers_unblock_by_func (g_ptr_array_index (self->profile_mons, i),
++                                       acpi_platform_profile_changed, self);
++  if (!written) {
+     g_debug ("Failed to write to acpi_platform_profile: %s", local_error->message);
+     g_propagate_prefixed_error (error, g_steal_pointer (&local_error),
+                                 "Failed to write to acpi_platform_profile: ");
+-    g_signal_handler_unblock (G_OBJECT (self->acpi_platform_profile_mon), self->acpi_platform_profile_changed_id);
+     return FALSE;
+   }
+-  g_signal_handler_unblock (G_OBJECT (self->acpi_platform_profile_mon), self->acpi_platform_profile_changed_id);
+ 
+   g_debug ("Successfully switched to profile %s", ppd_profile_to_str (profile));
+   self->acpi_platform_profile = profile;
+@@ -287,18 +324,51 @@ find_dytc (GUdevDevice *dev,
+   return 0;
+ }
+ 
++/* ACPI's legacy file, which drives every handler; without ACPI, each device
++ * of the class interface, all written alike as the legacy file does */
++static gboolean
++find_platform_profile_files (PpdDriverPlatformProfile *self)
++{
++  g_autofree char *acpi_path = NULL;
++  g_autofree char *class_path = NULL;
++  g_autoptr(GDir) dir = NULL;
++  const char *name;
++
++  acpi_path = ppd_utils_get_sysfs_path (ACPI_PLATFORM_PROFILE_PATH);
++  if (g_file_test (acpi_path, G_FILE_TEST_EXISTS)) {
++    g_ptr_array_add (self->profile_paths, g_steal_pointer (&acpi_path));
++    g_ptr_array_add (self->choices_paths,
++                     ppd_utils_get_sysfs_path (ACPI_PLATFORM_PROFILE_CHOICES_PATH));
++    return TRUE;
++  }
++
++  class_path = ppd_utils_get_sysfs_path (CLASS_PLATFORM_PROFILE_PATH);
++  dir = g_dir_open (class_path, 0, NULL);
++  if (dir == NULL)
++    return FALSE;
++
++  while ((name = g_dir_read_name (dir)) != NULL) {
++    g_autofree char *profile_path = g_build_filename (class_path, name, "profile", NULL);
++
++    if (!g_file_test (profile_path, G_FILE_TEST_EXISTS))
++      continue;
++    g_debug ("Found platform profile class device %s", name);
++    g_ptr_array_add (self->profile_paths, g_steal_pointer (&profile_path));
++    g_ptr_array_add (self->choices_paths, g_build_filename (class_path, name, "choices", NULL));
++  }
++
++  return self->profile_paths->len > 0;
++}
++
+ static PpdProbeResult
+ ppd_driver_platform_profile_probe (PpdDriver  *driver)
+ {
+   PpdDriverPlatformProfile *self = PPD_DRIVER_PLATFORM_PROFILE (driver);
+-  g_autoptr(GFile) acpi_platform_profile = NULL;
+-  g_autofree char *platform_profile_path = NULL;
+ 
+   g_return_val_if_fail (self->probe_result == PPD_PROBE_RESULT_UNSET, PPD_PROBE_RESULT_FAIL);
+ 
+   /* Profile interface */
+-  platform_profile_path = ppd_utils_get_sysfs_path (ACPI_PLATFORM_PROFILE_PATH);
+-  if (!g_file_test (platform_profile_path, G_FILE_TEST_EXISTS)) {
++  if (!find_platform_profile_files (self)) {
+     g_debug ("No platform_profile sysfs file");
+     return PPD_PROBE_RESULT_FAIL;
+   }
+@@ -310,14 +380,16 @@ ppd_driver_platform_profile_probe (PpdDriver  *driver)
+     return self->probe_result;
+   }
+ 
+-  acpi_platform_profile = g_file_new_for_path (platform_profile_path);
+-  self->acpi_platform_profile_mon = g_file_monitor (acpi_platform_profile,
+-                                                    G_FILE_MONITOR_NONE,
+-                                                    NULL,
+-                                                    NULL);
+-  self->acpi_platform_profile_changed_id =
+-    g_signal_connect (G_OBJECT (self->acpi_platform_profile_mon), "changed",
+-                      G_CALLBACK (acpi_platform_profile_changed), self);
++  for (guint i = 0; i < self->profile_paths->len; i++) {
++    g_autoptr(GFile) file = g_file_new_for_path (g_ptr_array_index (self->profile_paths, i));
++    GFileMonitor *mon = g_file_monitor (file, G_FILE_MONITOR_NONE, NULL, NULL);
++
++    if (mon == NULL)
++      continue;
++    g_signal_connect_object (G_OBJECT (mon), "changed",
++                             G_CALLBACK (acpi_platform_profile_changed), self, 0);
++    g_ptr_array_add (self->profile_mons, mon);
++  }
+   if (self->probe_result == PPD_PROBE_RESULT_DEFER) {
+     g_debug ("Monitoring platform_profile sysfs file");
+     return self->probe_result;
+@@ -351,12 +423,12 @@ ppd_driver_platform_profile_finalize (GObject *object)
+   PpdDriverPlatformProfile *driver;
+ 
+   driver = PPD_DRIVER_PLATFORM_PROFILE (object);
+-  g_clear_signal_handler (&driver->acpi_platform_profile_changed_id,
+-                          driver->acpi_platform_profile_mon);
++  g_clear_pointer (&driver->profile_mons, g_ptr_array_unref);
++  g_clear_pointer (&driver->profile_paths, g_ptr_array_unref);
++  g_clear_pointer (&driver->choices_paths, g_ptr_array_unref);
+   g_clear_pointer (&driver->profile_choices, g_strfreev);
+   g_clear_object (&driver->device);
+   g_clear_object (&driver->lapmode_mon);
+-  g_clear_object (&driver->acpi_platform_profile_mon);
+   G_OBJECT_CLASS (ppd_driver_platform_profile_parent_class)->finalize (object);
+ }
+ 
+@@ -379,4 +451,7 @@ static void
+ ppd_driver_platform_profile_init (PpdDriverPlatformProfile *self)
+ {
+   self->probe_result = PPD_PROBE_RESULT_UNSET;
++  self->profile_paths = g_ptr_array_new_with_free_func (g_free);
++  self->choices_paths = g_ptr_array_new_with_free_func (g_free);
++  self->profile_mons = g_ptr_array_new_with_free_func (g_object_unref);
+ }
+diff --git a/tests/integration_test.py b/tests/integration_test.py
+index 0994cf2..01bf634 100644
+--- a/tests/integration_test.py
++++ b/tests/integration_test.py
+@@ -386,6 +386,19 @@ class Tests(dbusmock.DBusTestCase):
+             "low-power balanced performance custom\n",
+         )
+ 
++    def create_class_platform_profile(
++        self, index=0, profile="balanced", choices="low-power balanced performance"
++    ):
++        """A device of the platform-profile class, as on a machine without ACPI"""
++        class_dir = os.path.join(
++            self.testbed.get_root_dir(),
++            f"sys/class/platform-profile/platform-profile-{index}/",
++        )
++        os.makedirs(class_dir, exist_ok=True)
++        self.write_file_contents(os.path.join(class_dir, "name"), "macsmc\n")
++        self.write_file_contents(os.path.join(class_dir, "profile"), profile + "\n")
++        self.write_file_contents(os.path.join(class_dir, "choices"), choices + "\n")
++
+     def remove_platform_profile(self):
+         acpi_dir = os.path.join(self.testbed.get_root_dir(), "sys/firmware/acpi/")
+         os.remove(os.path.join(acpi_dir, "platform_profile_choices"))
+@@ -2005,6 +2018,62 @@ class Tests(dbusmock.DBusTestCase):
+             self.read_sysfs_file("sys/firmware/acpi/platform_profile"), b"balanced"
+         )
+ 
++    def test_class_platform_profile(self):
++        """The class interface, where there is no ACPI"""
++        self.create_class_platform_profile()
++        self.start_daemon()
++
++        profiles = self.get_dbus_property("Profiles")
++        self.assertEqual(len(profiles), 3)
++        self.assertEqual(profiles[0]["PlatformDriver"], "platform_profile")
++        self.assertEqual(profiles[0]["Profile"], "power-saver")
++        self.assertEqual(self.get_dbus_property("ActiveProfile"), "balanced")
++
++        profile = "sys/class/platform-profile/platform-profile-0/profile"
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assert_eventually(lambda: self.read_sysfs_file(profile) == b"low-power")
++
++        # a change from outside the daemon, as a hotkey's
++        self.write_sysfs_file(profile, "performance\n")
++        self.assert_dbus_property_eventually_is("ActiveProfile", "performance")
++
++    def test_class_platform_profiles(self):
++        """Two class devices: their common choices, both written"""
++        self.create_class_platform_profile(0)
++        self.create_class_platform_profile(
++            1, choices="cool low-power balanced performance"
++        )
++        self.start_daemon()
++
++        profiles = self.get_dbus_property("Profiles")
++        self.assertEqual(len(profiles), 3)
++        self.assertEqual(profiles[0]["PlatformDriver"], "platform_profile")
++
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        for index in (0, 1):
++            path = f"sys/class/platform-profile/platform-profile-{index}/profile"
++            self.assert_eventually(
++                lambda p=path: self.read_sysfs_file(p) == b"low-power"
++            )
++
++    def test_class_platform_profile_acpi_first(self):
++        """With ACPI's legacy file present, the class devices are left to it"""
++        self.create_platform_profile()
++        self.create_class_platform_profile()
++        self.start_daemon()
++
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assert_eventually(
++            lambda: self.read_sysfs_file("sys/firmware/acpi/platform_profile")
++            == b"low-power"
++        )
++        self.assertEqual(
++            self.read_sysfs_file(
++                "sys/class/platform-profile/platform-profile-0/profile"
++            ),
++            b"balanced",
++        )
++
+     def test_hold_release_profile(self):
+         self.create_platform_profile()
+         self.start_daemon()
+-- 
+2.56.1
+

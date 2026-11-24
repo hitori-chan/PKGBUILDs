@@ -1,0 +1,28 @@
+From a6fa828d953915bcfc5b8c05b13d33f232d8c26c Mon Sep 17 00:00:00 2001
+From: hitori-chan <hitori1403@gmail.com>
+Date: Tue, 24 Nov 2026 11:19:50 +0700
+Subject: [PATCH 4/4] data: Want upower, whose power source the profile and the
+ panel dim follow
+
+The daemon follows upower's OnBattery without starting it (G_DBUS_PROXY_FLAGS_DO_NOT_AUTO_START), and a system may have nothing else start upower, which is D-Bus activated. Without it, neither the profile per power source nor the panel dim on battery ever applies.
+---
+ data/power-profiles-daemon.service.in | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/data/power-profiles-daemon.service.in b/data/power-profiles-daemon.service.in
+index b753b08..0c30ce7 100644
+--- a/data/power-profiles-daemon.service.in
++++ b/data/power-profiles-daemon.service.in
+@@ -2,6 +2,9 @@
+ Description=Power Profiles daemon
+ Conflicts=tuned.service tlp.service auto-cpufreq.service system76-power.service
+ After=multi-user.target display-manager.target
++# the power source, which the profile and the panel dim follow
++Wants=upower.service
++After=upower.service
+ 
+ [Service]
+ Type=dbus
+-- 
+2.56.1
+

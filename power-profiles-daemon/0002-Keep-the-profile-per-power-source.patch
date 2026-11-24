@@ -1,0 +1,362 @@
+From 0d121d3af770998085e0e643097393868a431aee Mon Sep 17 00:00:00 2001
+From: hitori-chan <hitori1403@gmail.com>
+Date: Tue, 24 Nov 2026 11:16:30 +0700
+Subject: [PATCH 2/4] Keep the profile per power source
+
+macOS keeps an Energy Mode for battery and one for AC and applies the
+right one at every plug event, both Automatic until the user picks one
+(powerd's -[PMPowerModeHandler readPreferences] reads LowPowerMode under
+"AC Power" and "Battery Power"; pluggedInNotificationHandler: re-evaluates
+it). Do the same with upower's OnBattery: a profile the user chooses (over
+D-Bus, or a driver's own change such as a hotkey) is kept for the source in
+use, saved as ProfileAC and ProfileBattery, and a change of source applies
+the other's, with the new activation reason POWER_SOURCE.
+
+Both are balanced on a fresh install; a configuration saved without them
+gives both its last profile, so an update changes nothing. A choice made
+before upower answers is kept for both, so its first answer keeps it. A
+program's hold outlasts the change, and its release returns to the new
+source's profile. The D-Bus API is unchanged.
+---
+ README.md                   |   7 +++
+ src/power-profiles-daemon.c | 105 ++++++++++++++++++++++++++++++++++++
+ src/ppd-driver.c            |   2 +
+ src/ppd-driver.h            |   5 +-
+ tests/integration_test.py   | 102 +++++++++++++++++++++++++++++++++++
+ 5 files changed, 220 insertions(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index aa4b079..41b8906 100644
+--- a/README.md
++++ b/README.md
+@@ -76,6 +76,13 @@ Some actions and profiles have the ability to respond to changes to the battery
+ level and state of the AC adapter on the system.  These change events are triggered
+ by upower.
+ 
++The profile is kept per power source: the one last chosen while on battery is
++applied when the AC adapter is unplugged, and the one last chosen on AC when it
++is plugged in, as macOS keeps an Energy Mode for each. Both are `balanced`
++until chosen. A program's profile hold outlasts the change, and its release
++returns to that source's profile. They are saved as `ProfileAC` and
++`ProfileBattery` in `/var/lib/power-profiles-daemon/state.ini`.
++
+ If you would prefer not let any of these dynamic changes happen you can disable
+ upower support by running:
+ 
+diff --git a/src/power-profiles-daemon.c b/src/power-profiles-daemon.c
+index 01aac72..16d6e6d 100644
+--- a/src/power-profiles-daemon.c
++++ b/src/power-profiles-daemon.c
+@@ -80,6 +80,9 @@ typedef struct {
+ 
+   PpdProfile active_profile;
+   PpdProfile selected_profile;
++  /* the profile last chosen on each power source, applied when it is plugged */
++  PpdProfile ac_profile;
++  PpdProfile battery_profile;
+   GPtrArray *probed_drivers;
+   PpdDriverCpu *cpu_driver;
+   PpdDriverPlatform *platform_driver;
+@@ -450,6 +453,10 @@ save_configuration (PpdApp *data)
+ 
+   g_key_file_set_string (data->config, "State", "Profile",
+                          ppd_profile_to_str (data->active_profile));
++  g_key_file_set_string (data->config, "State", "ProfileAC",
++                         ppd_profile_to_str (data->ac_profile));
++  g_key_file_set_string (data->config, "State", "ProfileBattery",
++                         ppd_profile_to_str (data->battery_profile));
+ 
+   for (guint i = 0; i < data->actions->len; i++) {
+     PpdAction *action = g_ptr_array_index (data->actions, i);
+@@ -508,6 +515,33 @@ apply_configuration (PpdApp *data)
+   return TRUE;
+ }
+ 
++static PpdProfile
++config_profile (PpdApp     *data,
++                const char *key,
++                PpdProfile  fallback)
++{
++  g_autofree char *str = NULL;
++  PpdProfile profile;
++
++  str = g_key_file_get_string (data->config, "State", key, NULL);
++  if (str == NULL)
++    return fallback;
++
++  profile = ppd_profile_from_str (str);
++  return profile == PPD_PROFILE_UNSET ? fallback : profile;
++}
++
++/* Each power source's profile; a configuration saved without them gives both
++ * the last profile, and none gives both balanced */
++static void
++apply_source_profiles_configuration (PpdApp *data)
++{
++  PpdProfile last = config_profile (data, "Profile", PPD_PROFILE_BALANCED);
++
++  data->ac_profile = config_profile (data, "ProfileAC", last);
++  data->battery_profile = config_profile (data, "ProfileBattery", last);
++}
++
+ static void
+ load_configuration (PpdApp *data)
+ {
+@@ -549,6 +583,27 @@ actions_activate_profile (GPtrArray *actions,
+   }
+ }
+ 
++/* The user's choice, kept for the power source it was made on; with the
++ * source unknown (upower not there yet), for both, so that upower's first
++ * answer keeps it */
++static void
++record_source_profile (PpdApp     *data,
++                       PpdProfile  profile)
++{
++  switch (data->power_changed_reason) {
++  case PPD_POWER_CHANGED_REASON_AC:
++    data->ac_profile = profile;
++    break;
++  case PPD_POWER_CHANGED_REASON_BATTERY:
++    data->battery_profile = profile;
++    break;
++  default:
++    data->ac_profile = profile;
++    data->battery_profile = profile;
++    break;
++  }
++}
++
+ static gboolean
+ activate_target_profile (PpdApp                      *data,
+                          PpdProfile                   target_profile,
+@@ -604,6 +659,11 @@ activate_target_profile (PpdApp                      *data,
+ 
+   if (reason == PPD_PROFILE_ACTIVATION_REASON_USER ||
+       reason == PPD_PROFILE_ACTIVATION_REASON_INTERNAL)
++    record_source_profile (data, target_profile);
++
++  if (reason == PPD_PROFILE_ACTIVATION_REASON_USER ||
++      reason == PPD_PROFILE_ACTIVATION_REASON_INTERNAL ||
++      reason == PPD_PROFILE_ACTIVATION_REASON_POWER_SOURCE)
+     save_configuration (data);
+ 
+   return TRUE;
+@@ -1277,6 +1337,46 @@ upower_properties_changed (GDBusProxy *proxy,
+     upower_battery_changed (data, g_variant_get_double (percent_val));
+ }
+ 
++/* The profile last chosen on the power source now in use, as macOS applies
++ * each source's Energy Mode when it is plugged or unplugged */
++static void
++apply_source_profile (PpdApp *data)
++{
++  g_autoptr(GError) error = NULL;
++  PpdProfile profile;
++
++  switch (data->power_changed_reason) {
++  case PPD_POWER_CHANGED_REASON_AC:
++    profile = data->ac_profile;
++    break;
++  case PPD_POWER_CHANGED_REASON_BATTERY:
++    profile = data->battery_profile;
++    break;
++  default:
++    return;
++  }
++
++  if (!get_profile_available (data, profile)) {
++    g_debug ("Profile '%s' of this power source is unavailable",
++             ppd_profile_to_str (profile));
++    return;
++  }
++
++  /* a program's hold stays, and its release returns to this profile */
++  data->selected_profile = profile;
++  if (g_hash_table_size (data->profile_holds) != 0 ||
++      profile == data->active_profile)
++    return;
++
++  if (!activate_target_profile (data, profile,
++                                PPD_PROFILE_ACTIVATION_REASON_POWER_SOURCE, &error)) {
++    g_warning ("Failed to activate the power source's profile '%s': %s",
++               ppd_profile_to_str (profile), error->message);
++    return;
++  }
++  send_dbus_event (data, PROP_ACTIVE_PROFILE);
++}
++
+ static void
+ upower_battery_set_power_changed_reason (PpdApp                *data,
+                                          PpdPowerChangedReason  reason)
+@@ -1325,6 +1425,8 @@ upower_battery_set_power_changed_reason (PpdApp                *data,
+                  error->message);
+     }
+   }
++
++  apply_source_profile (data);
+ }
+ 
+ static void
+@@ -1718,6 +1820,9 @@ start_profile_drivers (PpdApp *data)
+ 
+   /* Set initial state either from configuration, or using the currently selected profile */
+   apply_configuration (data);
++  apply_source_profiles_configuration (data);
++  /* the power source picks its profile */
++  needs_battery_state_monitor = TRUE;
+   if (!activate_target_profile (data, data->active_profile, PPD_PROFILE_ACTIVATION_REASON_RESET, &initial_error))
+     g_warning ("Failed to activate initial profile: %s", initial_error->message);
+ 
+diff --git a/src/ppd-driver.c b/src/ppd-driver.c
+index 2af4b98..3b21636 100644
+--- a/src/ppd-driver.c
++++ b/src/ppd-driver.c
+@@ -358,6 +358,8 @@ ppd_profile_activation_reason_to_str (PpdProfileActivationReason reason)
+     return "resume";
+   case PPD_PROFILE_ACTIVATION_REASON_PROGRAM_HOLD:
+     return "program-hold";
++  case PPD_PROFILE_ACTIVATION_REASON_POWER_SOURCE:
++    return "power-source";
+   default:
+     g_return_val_if_reached (NULL);
+   }
+diff --git a/src/ppd-driver.h b/src/ppd-driver.h
+index 4eb7bf3..b51bf45 100644
+--- a/src/ppd-driver.h
++++ b/src/ppd-driver.h
+@@ -27,6 +27,8 @@ G_DECLARE_DERIVABLE_TYPE (PpdDriver, ppd_driver, PPD, DRIVER, GObject)
+  *   is lost during suspend.
+  * @PPD_PROFILE_ACTIVATION_REASON_PROGRAM_HOLD: setting profile because a program
+  *   requested it through the `HoldProfile` method.
++ * @PPD_PROFILE_ACTIVATION_REASON_POWER_SOURCE: setting the profile last
++ *   chosen on the power source now in use, because it changed.
+  *
+  * Those are possible reasons for a profile being activated. Based on those
+  * reasons, drivers can choose whether or not that changes the effective
+@@ -37,7 +39,8 @@ typedef enum{
+   PPD_PROFILE_ACTIVATION_REASON_RESET,
+   PPD_PROFILE_ACTIVATION_REASON_USER,
+   PPD_PROFILE_ACTIVATION_REASON_RESUME,
+-  PPD_PROFILE_ACTIVATION_REASON_PROGRAM_HOLD
++  PPD_PROFILE_ACTIVATION_REASON_PROGRAM_HOLD,
++  PPD_PROFILE_ACTIVATION_REASON_POWER_SOURCE
+ } PpdProfileActivationReason;
+ 
+ /**
+diff --git a/tests/integration_test.py b/tests/integration_test.py
+index 01bf634..b563fec 100644
+--- a/tests/integration_test.py
++++ b/tests/integration_test.py
+@@ -2074,6 +2074,108 @@ class Tests(dbusmock.DBusTestCase):
+             b"balanced",
+         )
+ 
++    def test_power_source_profiles(self):
++        """Each power source's last chosen profile, applied when it is plugged"""
++        self.create_class_platform_profile()
++        _, upowerd_obj, _ = self.start_dbus_template(
++            "upower",
++            {"DaemonVersion": "0.99", "OnBattery": False},
++        )
++        self.start_daemon()
++        self.assertEqual(self.get_dbus_property("ActiveProfile"), "balanced")
++        profile = "sys/class/platform-profile/platform-profile-0/profile"
++
++        # both sources start balanced
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", True)
++        self.assert_dbus_property_eventually_is(
++            "ActiveProfile", "balanced", keep_checking=500
++        )
++
++        # power-saver chosen on battery, then plugged: AC's balanced
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assert_eventually(lambda: self.read_sysfs_file(profile) == b"low-power")
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", False)
++        self.assert_dbus_property_eventually_is("ActiveProfile", "balanced")
++        self.assert_eventually(lambda: self.read_sysfs_file(profile) == b"balanced")
++
++        # performance chosen on AC; each source then gets its own
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("performance"))
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", True)
++        self.assert_dbus_property_eventually_is("ActiveProfile", "power-saver")
++        self.assert_eventually(lambda: self.read_sysfs_file(profile) == b"low-power")
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", False)
++        self.assert_dbus_property_eventually_is("ActiveProfile", "performance")
++
++        # a change from outside the daemon counts as the user's
++        self.write_sysfs_file(profile, "balanced\n")
++        self.assert_dbus_property_eventually_is("ActiveProfile", "balanced")
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", True)
++        self.assert_dbus_property_eventually_is("ActiveProfile", "power-saver")
++
++        # kept across a restart, and applied at upower's first answer
++        self.stop_daemon()
++        self.start_daemon()
++        self.assert_dbus_property_eventually_is("ActiveProfile", "power-saver")
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", False)
++        self.assert_dbus_property_eventually_is("ActiveProfile", "balanced")
++
++    def test_power_source_profiles_hold(self):
++        """A hold outlasts a plug event, and its release goes to that source's profile"""
++        self.create_class_platform_profile()
++        _, upowerd_obj, _ = self.start_dbus_template(
++            "upower",
++            {"DaemonVersion": "0.99", "OnBattery": True},
++        )
++        self.start_daemon()
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++
++        cookie = self.call_dbus_method(
++            "HoldProfile",
++            GLib.Variant("(sss)", ("performance", "testReason", "testApplication")),
++        )
++        self.assert_dbus_property_eventually_is("ActiveProfile", "performance")
++
++        # plugged with the hold on: the hold stays
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", False)
++        self.assert_dbus_property_eventually_is(
++            "ActiveProfile", "performance", keep_checking=500
++        )
++
++        # released: AC's profile, balanced
++        self.call_dbus_method("ReleaseProfile", GLib.Variant("(u)", cookie))
++        self.assert_dbus_property_eventually_is("ActiveProfile", "balanced")
++
++    def test_power_source_profiles_seeded(self):
++        """A configuration saved before the per-source profiles gives both its profile"""
++        self.create_class_platform_profile()
++        self.start_daemon()
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("performance"))
++        self.stop_daemon()
++
++        # as a daemon without the per-source profiles saved it
++        conf = os.path.join(self.testbed.get_root_dir(), "ppd_test_conf.ini")
++        with open(conf, encoding="utf-8") as tmpf:
++            lines = [
++                line
++                for line in tmpf
++                if not line.startswith(("ProfileAC=", "ProfileBattery="))
++            ]
++        with open(conf, "w", encoding="utf-8") as tmpf:
++            tmpf.writelines(lines)
++
++        _, upowerd_obj, _ = self.start_dbus_template(
++            "upower",
++            {"DaemonVersion": "0.99", "OnBattery": True},
++        )
++        self.start_daemon()
++        self.assert_dbus_property_eventually_is(
++            "ActiveProfile", "performance", keep_checking=500
++        )
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", False)
++        self.assert_dbus_property_eventually_is(
++            "ActiveProfile", "performance", keep_checking=500
++        )
++
+     def test_hold_release_profile(self):
+         self.create_platform_profile()
+         self.start_daemon()
+-- 
+2.56.1
+

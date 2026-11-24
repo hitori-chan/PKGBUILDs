@@ -1,0 +1,65 @@
+# Maintainer: Antonio Rojas <arojas@archlinux.org>
+# Contributor: tinywrkb <tinywrkb@gmail.com>
+
+pkgname=power-profiles-daemon
+pkgver=0.30
+pkgrel=1.1
+pkgdesc='Makes power profiles handling available over D-Bus'
+url='https://gitlab.freedesktop.org/upower/power-profiles-daemon'
+license=(GPL-3.0-only)
+arch=(aarch64)
+depends=(glib2
+         glibc
+         libgcc
+         libgudev
+         polkit
+         upower)
+optdepends=('python-gobject: for powerprofilesctl')
+makedepends=(bash-completion
+             git
+             glib2-devel
+             python-argparse-manpage
+             python-shtab
+             meson)
+checkdepends=(python-dbusmock
+              python-isort
+              python-mccabe
+              umockdev)
+# macOS's power modes on Apple silicon: the platform-profile class without ACPI, the profile kept per power
+# source, the panel dimmed on battery and in power-saver (apple/panel_power_savings), and upower started
+source=(git+https://gitlab.freedesktop.org/upower/$pkgname#tag=$pkgver
+        0001-platform-profile-Use-the-class-interface-where-there.patch
+        0002-Keep-the-profile-per-power-source.patch
+        0003-Add-a-panel-dim-action-for-panel_power_savings-beyon.patch
+        0004-data-Want-upower-whose-power-source-the-profile-and-.patch)
+sha256sums=('e955e833b01cbff9b5b00349592239e58c559d717eb49f3371f42932676e7a40'
+            'bd829a89f29f9167e69f4b082b294f8cbf403f0994957eb6d41bc6f032dc39bf'
+            '264dab87ff59622b5c7309626f3b506a6a8f71db36d9e5eda54455c26394934a'
+            '16f00dad6eebf926c9c900e472da019a4fbc17aaa115e3546143b8b33cef247c'
+            '214d809be91e955588292e10d6117ad963d2996ba4030512a76996d6e1653b4c')
+
+prepare() {
+  cd $pkgname
+  for p in ../000*.patch; do
+    patch -Np1 -i "$p"
+  done
+}
+
+build() {
+  meson $pkgname build \
+    --prefix /usr \
+    --libexec lib \
+    --sysconfdir /usr/share \
+    -Dzshcomp=/usr/share/zsh/site-functions \
+    -Dbashcomp=enabled \
+    -Dmanpage=enabled
+  meson compile -C build
+}
+
+check() {
+  meson test -C build --print-errorlogs
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}

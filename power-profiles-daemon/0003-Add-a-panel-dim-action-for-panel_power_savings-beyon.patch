@@ -1,0 +1,462 @@
+From 512d33598d8743cce683a513c0e2d8a7885447c7 Mon Sep 17 00:00:00 2001
+From: hitori-chan <hitori1403@gmail.com>
+Date: Tue, 24 Nov 2026 11:19:14 +0700
+Subject: [PATCH 3/4] Add a panel dim action for panel_power_savings beyond
+ amdgpu
+
+The Apple silicon display driver takes amdgpu's panel_power_savings ABI
+(0 to 4, 0 off) in a group named after it, apple/panel_power_savings, for
+the dim macOS applies on battery and in Low Power mode on AC (CoreBrightness:
+the SDR luminance times 0.7). The amdgpu action cannot drive it: it probes
+by CPU vendor, is opt-in, and grades ABM by battery level on battery only.
+
+panel_dim writes 1 to any connected connector's <driver>/panel_power_savings
+but amdgpu's on battery or in power-saver, else 0; on by default, as macOS's
+"Slightly dim the display on battery" is. Disabled, or with the daemon
+stopping, it writes 0 again, so the panel is never left dimmed.
+---
+ README.md                   |  13 ++
+ docs/meson.build            |   1 +
+ src/meson.build             |   1 +
+ src/power-profiles-daemon.c |   2 +
+ src/ppd-action-panel-dim.c  | 257 ++++++++++++++++++++++++++++++++++++
+ src/ppd-action-panel-dim.h  |  17 +++
+ tests/integration_test.py   |  66 +++++++++
+ 7 files changed, 357 insertions(+)
+ create mode 100644 src/ppd-action-panel-dim.c
+ create mode 100644 src/ppd-action-panel-dim.h
+
+diff --git a/README.md b/README.md
+index 41b8906..cb8b928 100644
+--- a/README.md
++++ b/README.md
+@@ -236,6 +236,19 @@ enabled using `powerprofilesctl`:
+ powerprofilesctl configure-action amdgpu_dpm --enable
+ ```
+ 
++## Panel dimming
++
++A DRM driver other than amdgpu may give its panel's connector the same
++`panel_power_savings` attribute, in a group named after the driver (the Apple
++silicon display driver's `apple/panel_power_savings`). The `panel_dim` action
++writes 1 to it on battery and in the "power-saver" profile, and 0 otherwise,
++as macOS dims its panel on battery and in Low Power mode. It is enabled by
++default, and can be disabled by running:
++
++```sh
++powerprofilesctl configure-action panel_dim --disable
++```
++
+ ## Multiple driver and multiple action operations
+ 
+ Power-profiles daemon will load all supported drivers and actions by default.
+diff --git a/docs/meson.build b/docs/meson.build
+index ead4574..219b603 100644
+--- a/docs/meson.build
++++ b/docs/meson.build
+@@ -22,6 +22,7 @@ private_headers = [
+   'power-profiles-daemon.h',
+   'ppd-action-trickle-charge.h',
+   'ppd-action-amdgpu-panel-power.h',
++  'ppd-action-panel-dim.h',
+   'ppd-driver-fake.h',
+   'ppd-driver-intel-pstate.h',
+   'ppd-driver-amd-pstate.h',
+diff --git a/src/meson.build b/src/meson.build
+index 0056466..4b6cd90 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -90,6 +90,7 @@ sources += [
+   'power-profiles-daemon.c',
+   'ppd-action-trickle-charge.c',
+   'ppd-action-amdgpu-panel-power.c',
++  'ppd-action-panel-dim.c',
+   'ppd-action-amdgpu-dpm.c',
+   'ppd-driver-intel-pstate.c',
+   'ppd-driver-amd-pstate.c',
+diff --git a/src/power-profiles-daemon.c b/src/power-profiles-daemon.c
+index 16d6e6d..c41d96b 100644
+--- a/src/power-profiles-daemon.c
++++ b/src/power-profiles-daemon.c
+@@ -142,6 +142,7 @@ static void upower_battery_set_power_changed_reason (PpdApp *, PpdPowerChangedRe
+ #include "ppd-action-trickle-charge.h"
+ #include "ppd-action-amdgpu-panel-power.h"
+ #include "ppd-action-amdgpu-dpm.h"
++#include "ppd-action-panel-dim.h"
+ #include "ppd-driver-placeholder.h"
+ #include "ppd-driver-platform-profile.h"
+ #include "ppd-driver-intel-pstate.h"
+@@ -164,6 +165,7 @@ static GTypeGetFunc objects[] = {
+   ppd_action_trickle_charge_get_type,
+   ppd_action_amdgpu_panel_power_get_type,
+   ppd_action_amdgpu_dpm_get_type,
++  ppd_action_panel_dim_get_type,
+ };
+ 
+ typedef enum {
+diff --git a/src/ppd-action-panel-dim.c b/src/ppd-action-panel-dim.c
+new file mode 100644
+index 0000000..d9cbddd
+--- /dev/null
++++ b/src/ppd-action-panel-dim.c
+@@ -0,0 +1,257 @@
++/*
++ * SPDX-License-Identifier: GPL-3.0-only
++ *
++ * Copyright (c) 2024 Advanced Micro Devices
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 3 as published by
++ * the Free Software Foundation.
++ *
++ */
++
++#define G_LOG_DOMAIN "PanelDim"
++
++#include "config.h"
++
++#include <gudev/gudev.h>
++
++#include "ppd-action-panel-dim.h"
++#include "ppd-profile.h"
++#include "ppd-utils.h"
++
++#define PANEL_POWER_SYSFS_NAME "panel_power_savings"
++#define PANEL_STATUS_SYSFS_NAME "status"
++/* amdgpu's attribute, which the amdgpu_panel_power action drives */
++#define AMDGPU_GROUP_NAME "amdgpu"
++
++/**
++ * SECTION:ppd-action-panel-dim
++ * @Short_description: The panel dimmed on battery and in power-saver
++ * @Title: Panel dim action
++ *
++ * The panel dim action writes the "panel_power_savings" attribute that a DRM
++ * driver other than amdgpu gives a panel's connector, in a group named after
++ * the driver ("apple/panel_power_savings"), with amdgpu's values: 0 for none,
++ * 1 to 4 for its power savings. It writes 1 on battery and in power-saver,
++ * else 0, as macOS dims its panel on battery and in Low Power on AC.
++ *
++ */
++
++struct _PpdActionPanelDim
++{
++  PpdAction  parent_instance;
++  PpdProfile last_profile;
++
++  GUdevClient *client;
++
++  gint target;
++  gboolean on_battery;
++};
++
++G_DEFINE_TYPE (PpdActionPanelDim, ppd_action_panel_dim, PPD_TYPE_ACTION)
++
++static GObject*
++ppd_action_panel_dim_constructor (GType                  type,
++                                  guint                  n_construct_params,
++                                  GObjectConstructParam *construct_params)
++{
++  GObject *object;
++
++  object = G_OBJECT_CLASS (ppd_action_panel_dim_parent_class)->constructor (type,
++                                                                            n_construct_params,
++                                                                            construct_params);
++  g_object_set (object,
++                "action-name", "panel_dim",
++                "action-description", "Panel dimmed on battery and in power-saver",
++                NULL);
++
++  return object;
++}
++
++static gboolean
++panel_connected (GUdevDevice *device)
++{
++  const char *value;
++  g_autofree gchar *stripped = NULL;
++
++  value = g_udev_device_get_sysfs_attr_uncached (device, PANEL_STATUS_SYSFS_NAME);
++  if (!value)
++    return FALSE;
++  stripped = g_strchomp (g_strdup (value));
++
++  return g_strcmp0 (stripped, "connected") == 0;
++}
++
++/* The connector's panel_power_savings, in its driver's group but amdgpu's */
++static char *
++find_panel_power_attr (GUdevDevice *device)
++{
++  g_autoptr(GDir) dir = NULL;
++  const char *name;
++
++  if (g_strcmp0 (g_udev_device_get_devtype (device), "drm_connector") != 0)
++    return NULL;
++
++  dir = g_dir_open (g_udev_device_get_sysfs_path (device), 0, NULL);
++  if (dir == NULL)
++    return NULL;
++
++  while ((name = g_dir_read_name (dir)) != NULL) {
++    g_autofree char *attr = NULL;
++
++    if (g_str_equal (name, AMDGPU_GROUP_NAME))
++      continue;
++    attr = g_build_filename (name, PANEL_POWER_SYSFS_NAME, NULL);
++    if (g_udev_device_has_sysfs_attr_uncached (device, attr))
++      return g_steal_pointer (&attr);
++  }
++
++  return NULL;
++}
++
++static gboolean
++write_panel_dim (GUdevDevice  *device,
++                 gint          target,
++                 GError      **error)
++{
++  g_autofree char *attr = NULL;
++  const char *value;
++
++  if (!panel_connected (device))
++    return TRUE;
++
++  attr = find_panel_power_attr (device);
++  if (attr == NULL)
++    return TRUE;
++
++  value = g_udev_device_get_sysfs_attr_uncached (device, attr);
++  if (value != NULL && g_ascii_strtoll (value, NULL, 10) == target)
++    return TRUE;
++
++  g_debug ("Writing %d to %s/%s", target, g_udev_device_get_sysfs_path (device), attr);
++  return ppd_utils_write_sysfs_int (device, attr, target, error);
++}
++
++static gboolean
++write_panel_dims (PpdActionPanelDim  *self,
++                  gint                target,
++                  GError            **error)
++{
++  g_autolist (GUdevDevice) devices = NULL;
++
++  devices = g_udev_client_query_by_subsystem (self->client, "drm");
++  for (GList *l = devices; l != NULL; l = l->next) {
++    if (!write_panel_dim (l->data, target, error))
++      return FALSE;
++  }
++
++  return TRUE;
++}
++
++static gboolean
++ppd_action_panel_dim_update_target (PpdActionPanelDim  *self,
++                                    GError            **error)
++{
++  self->target = self->on_battery || self->last_profile == PPD_PROFILE_POWER_SAVER;
++  g_info ("Panel dim %d (on battery %d, profile %s)", self->target, self->on_battery,
++          ppd_profile_to_str (self->last_profile));
++
++  return write_panel_dims (self, self->target, error);
++}
++
++static gboolean
++ppd_action_panel_dim_activate_profile (PpdAction   *action,
++                                       PpdProfile   profile,
++                                       GError     **error)
++{
++  PpdActionPanelDim *self = PPD_ACTION_PANEL_DIM (action);
++
++  self->last_profile = profile;
++
++  return ppd_action_panel_dim_update_target (self, error);
++}
++
++static gboolean
++ppd_action_panel_dim_power_changed (PpdAction             *action,
++                                    PpdPowerChangedReason  reason,
++                                    GError               **error)
++{
++  PpdActionPanelDim *self = PPD_ACTION_PANEL_DIM (action);
++
++  /* an unknown source dims only in power-saver */
++  self->on_battery = reason == PPD_POWER_CHANGED_REASON_BATTERY;
++
++  return ppd_action_panel_dim_update_target (self, error);
++}
++
++static void
++udev_uevent_cb (GUdevClient *client,
++                gchar       *action,
++                GUdevDevice *device,
++                gpointer     user_data)
++{
++  PpdActionPanelDim *self = user_data;
++
++  if (!g_str_equal (action, "add"))
++    return;
++
++  write_panel_dim (device, self->target, NULL);
++}
++
++static PpdProbeResult
++ppd_action_panel_dim_probe (PpdAction *action)
++{
++  PpdActionPanelDim *self = PPD_ACTION_PANEL_DIM (action);
++  g_autolist (GUdevDevice) devices = NULL;
++
++  devices = g_udev_client_query_by_subsystem (self->client, "drm");
++  for (GList *l = devices; l != NULL; l = l->next) {
++    g_autofree char *attr = find_panel_power_attr (l->data);
++
++    if (attr != NULL) {
++      g_debug ("Found %s on %s", attr, g_udev_device_get_sysfs_path (l->data));
++      return PPD_PROBE_RESULT_SUCCESS;
++    }
++  }
++
++  return PPD_PROBE_RESULT_FAIL;
++}
++
++static void
++ppd_action_panel_dim_finalize (GObject *object)
++{
++  PpdActionPanelDim *action;
++
++  action = PPD_ACTION_PANEL_DIM (object);
++  /* disabled, or the daemon stopping: the panel back at its brightness */
++  if (action->target != 0)
++    write_panel_dims (action, 0, NULL);
++  g_clear_object (&action->client);
++  G_OBJECT_CLASS (ppd_action_panel_dim_parent_class)->finalize (object);
++}
++
++static void
++ppd_action_panel_dim_class_init (PpdActionPanelDimClass *klass)
++{
++  GObjectClass *object_class;
++  PpdActionClass *driver_class;
++
++  object_class = G_OBJECT_CLASS (klass);
++  object_class->constructor = ppd_action_panel_dim_constructor;
++  object_class->finalize = ppd_action_panel_dim_finalize;
++
++  driver_class = PPD_ACTION_CLASS (klass);
++  driver_class->probe = ppd_action_panel_dim_probe;
++  driver_class->activate_profile = ppd_action_panel_dim_activate_profile;
++  driver_class->power_changed = ppd_action_panel_dim_power_changed;
++}
++
++static void
++ppd_action_panel_dim_init (PpdActionPanelDim *self)
++{
++  const gchar * const subsystem[] = { "drm", NULL };
++
++  self->client = g_udev_client_new (subsystem);
++  g_signal_connect_object (G_OBJECT (self->client), "uevent",
++                           G_CALLBACK (udev_uevent_cb), self, 0);
++}
+diff --git a/src/ppd-action-panel-dim.h b/src/ppd-action-panel-dim.h
+new file mode 100644
+index 0000000..eedf762
+--- /dev/null
++++ b/src/ppd-action-panel-dim.h
+@@ -0,0 +1,17 @@
++/*
++ * SPDX-License-Identifier: GPL-3.0-only
++ *
++ * Copyright (c) 2024 Advanced Micro Devices
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU General Public License version 3 as published by
++ * the Free Software Foundation.
++ *
++ */
++
++#pragma once
++
++#include "ppd-action.h"
++
++#define PPD_TYPE_ACTION_PANEL_DIM (ppd_action_panel_dim_get_type())
++G_DECLARE_FINAL_TYPE(PpdActionPanelDim, ppd_action_panel_dim, PPD, ACTION_PANEL_DIM, PpdAction)
+diff --git a/tests/integration_test.py b/tests/integration_test.py
+index b563fec..848b789 100644
+--- a/tests/integration_test.py
++++ b/tests/integration_test.py
+@@ -1716,6 +1716,72 @@ class Tests(dbusmock.DBusTestCase):
+         self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
+         self.assert_sysfs_attr_eventually_is(card, amdgpu_dpm, "low")
+ 
++    def test_panel_dim(self):
++        """The panel dimmed on battery and in power-saver, as macOS does"""
++        panel_power_savings = "apple/panel_power_savings"
++        edp = self.testbed.add_device(
++            "drm",
++            "card2-eDP-1",
++            None,
++            ["status", "connected\n", panel_power_savings, "0"],
++            ["DEVTYPE", "drm_connector"],
++        )
++        # amdgpu's attribute is its own action's
++        amdgpu_panel_power_savings = "amdgpu/panel_power_savings"
++        amdgpu_edp = self.testbed.add_device(
++            "drm",
++            "card1-eDP-2",
++            None,
++            ["status", "connected\n", amdgpu_panel_power_savings, "0"],
++            ["DEVTYPE", "drm_connector"],
++        )
++        self.create_class_platform_profile()
++        _, upowerd_obj, _ = self.start_dbus_template(
++            "upower",
++            {"DaemonVersion": "0.99", "OnBattery": False},
++        )
++        self.start_daemon()
++
++        # on by default; none on AC in balanced
++        self.assert_action_enabled("panel_dim")
++        self.assert_sysfs_attr_eventually_is(
++            edp, panel_power_savings, "0", keep_checking=500
++        )
++
++        # on battery, whatever the profile
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", True)
++        self.assert_sysfs_attr_eventually_is(edp, panel_power_savings, "1")
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("performance"))
++        self.assert_sysfs_attr_eventually_is(
++            edp, panel_power_savings, "1", keep_checking=500
++        )
++
++        # on AC, in power-saver only
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", False)
++        self.assert_sysfs_attr_eventually_is(edp, panel_power_savings, "0")
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assert_sysfs_attr_eventually_is(edp, panel_power_savings, "1")
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("balanced"))
++        self.assert_sysfs_attr_eventually_is(edp, panel_power_savings, "0")
++
++        self.assertEqual(
++            self.read_sysfs_attr(amdgpu_edp, amdgpu_panel_power_savings), b"0"
++        )
++
++        # turned off, it undims the panel and leaves it alone
++        if self.PP_INTERFACE != "org.freedesktop.UPower.PowerProfiles":
++            return
++        self.set_dbus_property("ActiveProfile", GLib.Variant.new_string("power-saver"))
++        self.assert_sysfs_attr_eventually_is(edp, panel_power_savings, "1")
++        self.call_dbus_method(
++            "SetActionEnabled", GLib.Variant("(sb)", ("panel_dim", False))
++        )
++        self.assert_sysfs_attr_eventually_is(edp, panel_power_savings, "0")
++        upowerd_obj.Set("org.freedesktop.UPower", "OnBattery", True)
++        self.assert_sysfs_attr_eventually_is(
++            edp, panel_power_savings, "0", keep_checking=500
++        )
++
+     def test_amdgpu_panel_power(self):
+         """Verify AMDGPU Panel power actions"""
+         amdgpu_panel_power_savings = "amdgpu/panel_power_savings"
+-- 
+2.56.1
+
