@@ -6,24 +6,27 @@ _wine=a47c73f52fd7b2efafc1c560710f3a5099ae51e0
 _fex=490bb02f6e6b7b50f17049e5bb254bd5a6a2b779
 _staging=6cc805ea57132eeaf44764e9213823c9b8d0d300
 _mingw=llvm-mingw-20261020-ucrt-ubuntu-22.04-aarch64
+_dxvk=v3.2
 pkgname=proton-ge-custom
 pkgver=11.14
-pkgrel=1
+pkgrel=2
 pkgdesc='GE-Proton on a 16K kernel with per-process page sizes (P3S): its aarch64 release, Wine as a 4K process, our fixes'
 arch=('aarch64')
 url='https://github.com/hitori-chan/proton-ge-custom'
 license=('BSD-3-Clause' 'LGPL-2.1-or-later' 'MIT')
 depends=('python')
-makedepends=('autoconf' 'bison' 'clang' 'cmake' 'flex' 'git' 'libxkbcommon' 'lld' 'llvm' 'ninja' 'perl' 'wayland')
+makedepends=('autoconf' 'bison' 'clang' 'cmake' 'flex' 'git' 'glslang' 'libxkbcommon' 'lld' 'llvm' 'meson' 'ninja' 'perl' 'wayland')
 options=('!debug' '!lto' '!strip')
 source=("https://github.com/GloriousEggroll/proton-ge-custom/releases/download/$_ge/$_ge-aarch64.tar.gz"
         "proton-ge-custom-$_tag.tar.gz::https://github.com/hitori-chan/proton-ge-custom/archive/refs/tags/$_tag.tar.gz"
         "wine::git+https://github.com/ValveSoftware/wine.git#commit=$_wine"
         "wine-staging::git+https://github.com/wine-staging/wine-staging.git#commit=$_staging"
         "FEX::git+https://github.com/FEX-Emu/FEX.git#commit=$_fex"
+        "dxvk::git+https://github.com/doitsujin/dxvk.git#tag=$_dxvk"
         "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/$_mingw.tar.xz")
 sha256sums=('f6353f4417bd8c1148d7db18bc383d8e2c59c403e367425fd8b9daaaecc2fad8'
             '7f075a80d9184afc98b69d545a481e62ab845500ba078747a73f525e297d1b89'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -41,6 +44,15 @@ prepare() {
     if find wine FEX -name '*.rej' | grep -q .; then
         echo "a patch failed:"; find wine FEX -name '*.rej'; return 1
     fi
+
+    # DXVK as it ships (3.2 is past GE-Proton11-14's 3.1.1-174), with GE's patches to it, by its section's markers
+    { sed -n '1,/^### (1) PREP SECTION ###$/p' $pp; sed -n '/^    pushd dxvk$/,/^    popd$/p' $pp; } > prep-dxvk.sh
+    grep -q '^    pushd dxvk$' prep-dxvk.sh || { echo "prep-dxvk.sh: no DXVK section in GE's script"; return 1; }
+    bash prep-dxvk.sh
+    if find dxvk -name '*.rej' | grep -q .; then
+        echo "a DXVK patch failed:"; find dxvk -name '*.rej'; return 1
+    fi
+    git -C dxvk submodule update --init --recursive --depth 1
 
     cd wine
     find . -name '*.orig' -delete
@@ -73,6 +85,18 @@ build() {
     ninja -C fex-wow64 wow64fex
     cmake -S FEX -B fex-ec -G Ninja -DMINGW_TRIPLE=arm64ec-w64-mingw32 $a
     ninja -C fex-ec arm64ecfex
+
+    # DXVK's own cross files with llvm-mingw's triplet tools: i386 and x86_64 for the emulated games, ARM64X (native
+    # ARM64EC code that an x86_64 game calls through FEX) as GE's aarch64 release ships them; the ARM64X half for
+    # FEX's armv8.5-a, as above
+    local t
+    for t in i386:win32 x86_64:win64 aarch64:arm64x; do
+        local o=(--cross-file "dxvk/build-${t#*:}.txt" --buildtype release --prefix /usr --bindir "${t%%:*}-windows" --strip)
+        [ "${t%%:*}" = aarch64 ] && o+=(-Dc_args='-march=armv8.5-a -marm64x' -Dcpp_args='-march=armv8.5-a -marm64x')
+        meson setup "dxvk-${t%%:*}" dxvk "${o[@]}"
+        ninja -C "dxvk-${t%%:*}"
+        DESTDIR="$srcdir/dxvk-inst" meson install -C "dxvk-${t%%:*}" --no-rebuild
+    done
 }
 
 package() {
@@ -89,6 +113,12 @@ package() {
     install -m 644 wine-build/dlls/ntdll/i386-windows/ntdll.dll "$w/i386-windows/ntdll.dll"
     install -m 644 fex-wow64/Bin/libwow64fex.dll fex-ec/Bin/libarm64ecfex.dll "$w/aarch64-windows/"
     install -m 755 fex-unix/libwow64fex.so fex-unix/libarm64ecfex.so "$w/aarch64-unix/"
+
+    local a
+    for a in i386 x86_64 aarch64; do
+        install -m 644 dxvk-inst/usr/$a-windows/{d3d8,d3d9,d3d10core,d3d11,dxgi}.dll "$w/dxvk/$a-windows/"
+    done
+    echo " $(git -C dxvk rev-parse HEAD) dxvk ($(git -C dxvk describe --tags --dirty))" > "$w/dxvk/version"
 
     install -Dm 644 "$_ge-aarch64/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname/"
 }
